@@ -129,6 +129,58 @@ class JsonStorage(StorageBackend):
         self._save_json(log_path, log)
 
 
+class RedisUrlStorage(StorageBackend):
+    """Standard Redis (redis:// URL) for Redis Cloud, etc."""
+
+    USERS_KEY = "wiki:users"
+    SESSIONS_KEY = "wiki:sessions"
+
+    def __init__(self, url: str):
+        import redis
+        self._redis = redis.Redis.from_url(url, decode_responses=True)
+
+    def get_user(self, username: str) -> str | None:
+        val = self._redis.hget(self.USERS_KEY, username)
+        return val if val is not None else None
+
+    def set_user(self, username: str, password_hash: str) -> None:
+        self._redis.hset(self.USERS_KEY, username, password_hash)
+
+    def user_exists(self, username: str) -> bool:
+        return self.get_user(username) is not None
+
+    def get_all_users(self) -> dict[str, str]:
+        raw = self._redis.hgetall(self.USERS_KEY)
+        return raw or {}
+
+    def set_session(self, session_id: str, username: str) -> None:
+        self._redis.hset(self.SESSIONS_KEY, session_id, username)
+
+    def get_session(self, session_id: str) -> str | None:
+        val = self._redis.hget(self.SESSIONS_KEY, session_id)
+        return val if val is not None else None
+
+    def delete_session(self, session_id: str) -> None:
+        self._redis.hdel(self.SESSIONS_KEY, session_id)
+
+    def get_log(self, username: str) -> list:
+        key = f"wiki:log:{username}"
+        val = self._redis.get(key)
+        if not val:
+            return []
+        try:
+            data = json.loads(val)
+            return data if isinstance(data, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def save_log(self, username: str, log: list) -> None:
+        if not isinstance(log, list):
+            return
+        key = f"wiki:log:{username}"
+        self._redis.set(key, json.dumps(log))
+
+
 class RedisStorage(StorageBackend):
     """Upstash Redis storage for Vercel deployment."""
 
@@ -198,17 +250,25 @@ class RedisStorage(StorageBackend):
 
 def _get_storage() -> StorageBackend:
     """Return storage backend based on environment."""
-    url = os.environ.get("KV_REST_API_URL") or os.environ.get("UPSTASH_REDIS_REST_URL")
-    token = os.environ.get("KV_REST_API_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN")
+    # Redis Cloud / Redis Labs (redis:// URL)
+    redis_url = (os.environ.get("REDIS_URL") or "").strip()
+    if redis_url and redis_url.startswith("redis://"):
+        return RedisUrlStorage(redis_url)
+    # Upstash REST API (Vercel KV, Upstash Marketplace)
+    url = (os.environ.get("KV_REST_API_URL") or os.environ.get("UPSTASH_REDIS_REST_URL") or "").strip()
+    token = (os.environ.get("KV_REST_API_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN") or "").strip()
     if url and token:
         return RedisStorage()
-    # On Vercel, do not fall back to JsonStorage (filesystem is read-only)
+    # On Vercel: try RedisStorage (uses Redis.from_env() which may find vars we don't check)
     if os.environ.get("VERCEL"):
-        raise ValueError(
-            "Redis is required on Vercel. Add a Redis database in Vercel Storage "
-            "and connect it to this project so KV_REST_API_URL/KV_REST_API_TOKEN or "
-            "UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN are set."
-        )
+        try:
+            return RedisStorage()
+        except Exception as e:
+            raise ValueError(
+                "Redis required on Vercel. Redeploy the project after connecting Upstash Redis "
+                "in Storage. Visit /api/redis-status to see which env vars are available. "
+                f"({e})"
+            ) from e
     return JsonStorage()
 
 

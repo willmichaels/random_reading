@@ -3,6 +3,8 @@ FastAPI app for Vercel deployment.
 Handles auth and read-log API only. Static files served from public/ by Vercel.
 """
 
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
@@ -22,6 +24,22 @@ app = FastAPI(title="Random Technical Wiki API", version="1.0.0")
 @app.get("/")
 async def root():
     return RedirectResponse("/index.html")
+
+
+@app.get("/api/redis-status")
+async def redis_status():
+    """Debug: show which Redis env vars are available (keys only, no values)."""
+    redis_keys = [
+        "REDIS_URL",
+        "KV_REST_API_URL",
+        "KV_REST_API_TOKEN",
+        "UPSTASH_REDIS_REST_URL",
+        "UPSTASH_REDIS_REST_TOKEN",
+    ]
+    return {
+        k: "set" if (os.environ.get(k) or "").strip() else "empty"
+        for k in redis_keys
+    }
 
 
 @app.post("/api/register")
