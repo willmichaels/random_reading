@@ -68,6 +68,16 @@ class StorageBackend(ABC):
         """Save user's custom links."""
         pass
 
+    @abstractmethod
+    def get_presets(self, username: str) -> list:
+        """Get user's presets."""
+        pass
+
+    @abstractmethod
+    def save_presets(self, username: str, presets: list) -> None:
+        """Save user's presets."""
+        pass
+
 
 class JsonStorage(StorageBackend):
     """File-based JSON storage for local development."""
@@ -79,12 +89,14 @@ class JsonStorage(StorageBackend):
         self._sessions_file = self._data_dir / "sessions.json"
         self._logs_dir = self._data_dir / "logs"
         self._links_dir = self._data_dir / "links"
+        self._presets_dir = self._data_dir / "presets"
         self._ensure_dirs()
 
     def _ensure_dirs(self):
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._logs_dir.mkdir(parents=True, exist_ok=True)
         self._links_dir.mkdir(parents=True, exist_ok=True)
+        self._presets_dir.mkdir(parents=True, exist_ok=True)
 
     def _load_json(self, path: Path, default: dict | list) -> dict | list:
         if not path.exists():
@@ -150,6 +162,17 @@ class JsonStorage(StorageBackend):
             return
         links_path = self._links_dir / f"{username}.json"
         self._save_json(links_path, links)
+
+    def get_presets(self, username: str) -> list:
+        presets_path = self._presets_dir / f"{username}.json"
+        data = self._load_json(presets_path, [])
+        return data if isinstance(data, list) else []
+
+    def save_presets(self, username: str, presets: list) -> None:
+        if not isinstance(presets, list):
+            return
+        presets_path = self._presets_dir / f"{username}.json"
+        self._save_json(presets_path, presets)
 
 
 class RedisUrlStorage(StorageBackend):
@@ -219,6 +242,23 @@ class RedisUrlStorage(StorageBackend):
             return
         key = f"wiki:links:{username}"
         self._redis.set(key, json.dumps(links))
+
+    def get_presets(self, username: str) -> list:
+        key = f"wiki:presets:{username}"
+        val = self._redis.get(key)
+        if not val:
+            return []
+        try:
+            data = json.loads(val)
+            return data if isinstance(data, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def save_presets(self, username: str, presets: list) -> None:
+        if not isinstance(presets, list):
+            return
+        key = f"wiki:presets:{username}"
+        self._redis.set(key, json.dumps(presets))
 
 
 class RedisStorage(StorageBackend):
@@ -311,6 +351,23 @@ class RedisStorage(StorageBackend):
             return
         key = f"wiki:links:{username}"
         self._redis.set(key, json.dumps(links))
+
+    def get_presets(self, username: str) -> list:
+        key = f"wiki:presets:{username}"
+        val = self._redis.get(key)
+        if not val:
+            return []
+        try:
+            data = json.loads(val)
+            return data if isinstance(data, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def save_presets(self, username: str, presets: list) -> None:
+        if not isinstance(presets, list):
+            return
+        key = f"wiki:presets:{username}"
+        self._redis.set(key, json.dumps(presets))
 
 
 def _get_storage() -> StorageBackend:

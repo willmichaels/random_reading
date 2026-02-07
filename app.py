@@ -11,11 +11,13 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from auth import (
     SESSION_COOKIE,
     get_log,
+    get_presets,
     get_user_links,
     login as auth_login,
     logout as auth_logout,
     register as auth_register,
     save_log,
+    save_presets,
     save_user_links,
     verify_session,
 )
@@ -148,4 +150,28 @@ async def api_save_user_links(request: Request):
     if not isinstance(links, list):
         return JSONResponse({"error": "Invalid links"}, status_code=400)
     save_user_links(username, links)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/presets")
+async def api_get_presets(request: Request):
+    session_id = request.cookies.get(SESSION_COOKIE)
+    username = verify_session(session_id)
+    if not username:
+        return JSONResponse({"error": "Not logged in"}, status_code=401)
+    presets = get_presets(username)
+    return JSONResponse({"presets": presets})
+
+
+@app.post("/api/presets")
+async def api_save_presets(request: Request):
+    session_id = request.cookies.get(SESSION_COOKIE)
+    username = verify_session(session_id)
+    if not username:
+        return JSONResponse({"error": "Not logged in"}, status_code=401)
+    body = await request.json()
+    presets = body.get("presets", [])
+    if not isinstance(presets, list):
+        return JSONResponse({"error": "Invalid presets"}, status_code=400)
+    save_presets(username, presets)
     return JSONResponse({"ok": True})

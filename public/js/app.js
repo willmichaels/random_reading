@@ -78,11 +78,13 @@ const ARTICLES_CACHE = {};
 
 const READ_LOG_KEY = "random_wiki_read_log";
 const USER_LINKS_KEY = "random_wiki_user_links";
+const PRESETS_KEY = "random_wiki_presets";
 
 // Auth state (set when backend is available and user is logged in)
 let loggedInUser = null;
 let readLogCache = null;
 let userLinksCache = null;
+let presetsCache = null;
 
 const fetchOpts = { credentials: "include" };
 
@@ -160,6 +162,15 @@ function normalizeUrl(input) {
     return s;
   } catch {
     return null;
+  }
+}
+
+function isWikipediaUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname.includes("wikipedia.org") && u.pathname.startsWith("/wiki/");
+  } catch {
+    return false;
   }
 }
 
@@ -245,6 +256,117 @@ function removeUserLink(index) {
   renderUserLinks();
 }
 
+// --- Presets ---
+
+function getPresets() {
+  if (loggedInUser !== null && presetsCache !== null) {
+    return presetsCache;
+  }
+  try {
+    const raw = localStorage.getItem(PRESETS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePresets(presets) {
+  if (loggedInUser !== null) {
+    presetsCache = [...presets];
+    apiFetch("/api/presets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ presets })
+    }).catch((e) => console.error("Failed to sync presets:", e));
+    return;
+  }
+  try {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(presets));
+  } catch (e) {
+    console.error("Failed to save presets:", e);
+  }
+}
+
+function applyPreset(preset, andFetch = false) {
+  const hiddenInput = document.getElementById("categorySelect");
+  if (!hiddenInput) return;
+  const categories = preset.wikipediaCategories || [];
+  const sources = preset.includeMyLinks ? [...categories, "my_links"] : categories;
+  hiddenInput.value = JSON.stringify(sources.length ? sources : ["vital_technology"]);
+  syncCategoryPanelFromValue();
+  updateCategoryLabel();
+  if (andFetch) fetchArticle();
+}
+
+function renderPresets() {
+  const container = document.getElementById("presetsList");
+  if (!container) return;
+  const presets = getPresets();
+  if (!presets.length) {
+    container.innerHTML = '<span class="read-log-empty">No presets yet. Save your current selection as a preset.</span>';
+    return;
+  }
+  container.innerHTML = presets
+    .map(
+      (p, i) =>
+        `<span class="preset-chip" data-index="${i}">${escapeHtml(p.name)}<span class="preset-go">Go</span><span class="preset-delete" data-index="${i}">×</span></span>`
+    )
+    .join("");
+  container.querySelectorAll(".preset-chip").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      if (e.target.classList.contains("preset-delete")) {
+        e.stopPropagation();
+        const idx = Number(e.target.dataset.index);
+        const presets = getPresets().filter((_, i) => i !== idx);
+        savePresets(presets);
+        renderPresets();
+        return;
+      }
+      const preset = getPresets()[Number(el.dataset.index)];
+      if (preset) applyPreset(preset, true);
+    });
+  });
+}
+
+function openPresetModal() {
+  const modal = document.getElementById("presetModal");
+  const nameInput = document.getElementById("presetNameInput");
+  if (!modal || !nameInput) return;
+  nameInput.value = "";
+  modal.classList.add("visible");
+  nameInput.focus();
+}
+
+function closePresetModal() {
+  const modal = document.getElementById("presetModal");
+  if (modal) modal.classList.remove("visible");
+}
+
+function savePresetFromModal() {
+  const nameInput = document.getElementById("presetNameInput");
+  const name = (nameInput?.value || "").trim();
+  if (!name) {
+    alert("Please enter a preset name.");
+    return;
+  }
+  const selected = getSelectedCategories();
+  const wikipediaCategories = selected.filter((c) => c !== "my_links");
+  const includeMyLinks = selected.includes("my_links");
+  if (!wikipediaCategories.length && !includeMyLinks) {
+    alert("Please select at least one source (Wikipedia category or My links) from the dropdown.");
+    return;
+  }
+  const presets = getPresets();
+  presets.push({
+    name,
+    wikipediaCategories,
+    includeMyLinks
+  });
+  savePresets(presets);
+  renderPresets();
+  closePresetModal();
+}
+
 function renderUserLinks() {
   const container = document.getElementById("userLinksList");
   if (!container) return;
@@ -262,10 +384,18 @@ function renderUserLinks() {
         <span class="user-link-meta">${escapeHtml(e.date ? formatLogDate(e.date) : "—")}</span>
         <input type="text" class="entry-note" data-index="${i}" placeholder="Add note..." value="${escapeHtml(e.notes || "")}" />
       </div>
-      <span class="user-link-remove" data-index="${i}">Remove</span>
+      <span class="user-link-actions">
+        <span class="user-link-log" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title || deriveTitleFromUrl(e.url))}">Log</span>
+        <span class="user-link-remove" data-index="${i}">Remove</span>
+      </span>
     </div>`
     )
     .join("");
+  container.querySelectorAll(".user-link-log").forEach((el) => {
+    el.addEventListener("click", () =>
+      logArticle(el.dataset.url, el.dataset.title, "my_links")
+    );
+  });
   container.querySelectorAll(".user-link-remove").forEach((el) => {
     el.addEventListener("click", () => removeUserLink(Number(el.dataset.index)));
   });
@@ -376,10 +506,18 @@ async function fetchArticleLinks(category) {
 }
 
 /**
- * Get a random article URL for the given category.
+ * Get a random article URL for the given category or categories.
+ * categoryOrCategories: string (single) or string[] (multiple)
  */
-async function getRandomArticle(category) {
-  if (!getPageTitleForCategory(category)) return null;
+async function getRandomArticle(categoryOrCategories) {
+  const categories = Array.isArray(categoryOrCategories)
+    ? categoryOrCategories.filter((c) => getPageTitleForCategory(c))
+    : getPageTitleForCategory(categoryOrCategories)
+      ? [categoryOrCategories]
+      : [];
+  if (!categories.length) return null;
+
+  const category = categories[Math.floor(Math.random() * categories.length)];
 
   if (ARTICLES_CACHE[category]?.length) {
     const href = ARTICLES_CACHE[category][Math.floor(Math.random() * ARTICLES_CACHE[category].length)];
@@ -394,12 +532,23 @@ async function getRandomArticle(category) {
   return "https://en.wikipedia.org" + href;
 }
 
+function getSelectedCategories() {
+  const raw = document.getElementById("categorySelect")?.value || "[]";
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+  } catch {
+    return raw ? [raw] : [];
+  }
+}
+
 /**
  * Main: fetch random article and display.
  */
 async function fetchArticle() {
-  const source = document.querySelector('input[name="source"]:checked')?.value || "wikipedia";
-  const category = document.getElementById("categorySelect").value;
+  const selected = getSelectedCategories();
+  const wikiCategories = selected.filter((c) => c !== "my_links");
+  const includeMyLinks = selected.includes("my_links");
   const resultDiv = document.getElementById("result");
 
   resultDiv.innerHTML = "Loading...";
@@ -407,43 +556,39 @@ async function fetchArticle() {
   let url = null;
   let title = "";
   let categoryLabel = "";
-  let isCustom = false;
+  let logCategory = "my_links";
 
   try {
-    if (source === "my_links") {
-      const links = getUserLinks();
-      if (!links.length) {
-        resultDiv.innerHTML = "Add some links first in the My links section below.";
-        return;
+    const userLinks = getUserLinks();
+    const hasWiki = wikiCategories.length > 0;
+    const hasLinks = includeMyLinks && userLinks.length > 0;
+
+    if (!hasWiki && !hasLinks) {
+      resultDiv.innerHTML = "Select at least one source (Wikipedia category or My links) from the dropdown.";
+      return;
+    }
+    if (includeMyLinks && !userLinks.length) {
+      resultDiv.innerHTML = "Add some links first in the My links section.";
+      return;
+    }
+
+    const useWiki = hasWiki && (!hasLinks || Math.random() < 0.5);
+
+    if (useWiki) {
+      const cats = wikiCategories.length ? wikiCategories : ["vital_technology"];
+      url = await getRandomArticle(cats);
+      if (url) {
+        title = url.split("/wiki/")[1].replace(/_/g, " ");
+        const cat = cats[0];
+        categoryLabel = CATEGORY_LABELS[cat] || cat;
+        logCategory = cat;
       }
-      const pick = links[Math.floor(Math.random() * links.length)];
+    } else {
+      const pick = userLinks[Math.floor(Math.random() * userLinks.length)];
       url = pick.url;
       title = pick.title || deriveTitleFromUrl(url);
       categoryLabel = "My links";
-      isCustom = !isWikipediaUrl(url);
-    } else if (source === "both") {
-      const useWiki = Math.random() < 0.5;
-      const userLinks = getUserLinks();
-      if (useWiki || !userLinks.length) {
-        url = await getRandomArticle(category);
-        if (url) {
-          title = url.split("/wiki/")[1].replace(/_/g, " ");
-          categoryLabel = CATEGORY_LABELS[category] || category;
-        }
-      } else {
-        const pick = userLinks[Math.floor(Math.random() * userLinks.length)];
-        url = pick.url;
-        title = pick.title || deriveTitleFromUrl(url);
-        categoryLabel = "My links";
-        isCustom = !isWikipediaUrl(url);
-      }
-    } else {
-      url = await getRandomArticle(category);
-      if (url) {
-        title = url.split("/wiki/")[1].replace(/_/g, " ");
-        categoryLabel = CATEGORY_LABELS[category] || category;
-        isCustom = false;
-      }
+      logCategory = "my_links";
     }
   } catch (err) {
     console.error("fetchArticle error:", err);
@@ -452,16 +597,14 @@ async function fetchArticle() {
   }
 
   if (!url) {
-    resultDiv.innerHTML = `Failed to fetch article. Check the browser console (F12) for details. If testing locally, try <code>vercel dev</code> or <code>npx serve public</code> instead of opening the file directly.`;
+    resultDiv.innerHTML = `Failed to fetch article. Check the browser console (F12) for details.`;
     return;
   }
-
-  const logCategory = source === "my_links" || (source === "both" && categoryLabel === "My links") ? "my_links" : category;
 
   let html = `
     <div>Read: <a href="${escapeHtml(url)}" target="_blank">${escapeHtml(title)}</a></div>
     <div class="meta">Category: ${escapeHtml(categoryLabel)}</div>
-    <div class="meta" style="margin-top: 12px;"><span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}">Log article</span></div>
+    <div class="meta" style="margin-top: 12px;"><span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}">Log</span></div>
   `;
 
   resultDiv.innerHTML = html;
@@ -546,6 +689,27 @@ async function initAuth() {
       } else {
         userLinksCache = [];
       }
+      const presetsRes = await apiFetch("/api/presets");
+      if (presetsRes.ok) {
+        const presetsData = await presetsRes.json();
+        const serverPresets = presetsData.presets || [];
+        const localPresets = (() => {
+          try {
+            const raw = localStorage.getItem(PRESETS_KEY);
+            return raw ? JSON.parse(raw) : [];
+          } catch {
+            return [];
+          }
+        })();
+        if (localPresets.length && !serverPresets.length) {
+          presetsCache = localPresets;
+          savePresets(localPresets);
+        } else {
+          presetsCache = serverPresets;
+        }
+      } else {
+        presetsCache = [];
+      }
     }
   } catch {
     // No backend (e.g. static serve)
@@ -553,6 +717,7 @@ async function initAuth() {
   updateAuthUI();
   renderReadLog();
   renderUserLinks();
+  renderPresets();
 }
 
 function openAuthModal(mode) {
@@ -640,10 +805,18 @@ async function handleAuthSubmit(e) {
       } else {
         userLinksCache = [];
       }
+      const presetsRes = await apiFetch("/api/presets");
+      if (presetsRes.ok) {
+        const presetsData = await presetsRes.json();
+        presetsCache = presetsData.presets || [];
+      } else {
+        presetsCache = [];
+      }
       closeAuthModal();
       updateAuthUI();
       renderReadLog();
       renderUserLinks();
+      renderPresets();
       return;
     }
     if (!res.ok) {
@@ -669,10 +842,18 @@ async function handleAuthSubmit(e) {
     } else {
       userLinksCache = [];
     }
+    const presetsRes = await apiFetch("/api/presets");
+    if (presetsRes.ok) {
+      const presetsData = await presetsRes.json();
+      presetsCache = presetsData.presets || [];
+    } else {
+      presetsCache = [];
+    }
     closeAuthModal();
     updateAuthUI();
     renderReadLog();
     renderUserLinks();
+    renderPresets();
   } catch (err) {
     errorEl.textContent = "Could not connect. Run `vercel dev` or deploy to Vercel.";
     errorEl.style.display = "block";
@@ -690,17 +871,49 @@ async function handleLogout() {
   loggedInUser = null;
   readLogCache = null;
   userLinksCache = null;
+  presetsCache = null;
   updateAuthUI();
   renderReadLog();
   renderUserLinks();
+  renderPresets();
 }
 
-// Custom category dropdown
+function updateCategoryLabel() {
+  const hiddenInput = document.getElementById("categorySelect");
+  const labelEl = document.querySelector(".category-trigger-label");
+  if (!hiddenInput || !labelEl) return;
+  const selected = getSelectedCategories();
+  if (selected.length === 0) {
+    labelEl.textContent = "Select sources...";
+  } else if (selected.length === 1) {
+    labelEl.textContent = CATEGORY_LABELS[selected[0]] || selected[0];
+  } else {
+    labelEl.textContent = `${selected.length} sources`;
+  }
+}
+
+function syncCategoryPanelFromValue() {
+  const hiddenInput = document.getElementById("categorySelect");
+  const panel = document.getElementById("categoryPanel");
+  if (!hiddenInput || !panel) return;
+  const selected = getSelectedCategories();
+  panel.querySelectorAll(".category-option").forEach((el) => {
+    const checkbox = el.querySelector('input[type="checkbox"]');
+    const val = el.dataset.value;
+    if (checkbox && val) {
+      checkbox.checked = selected.includes(val);
+      el.classList.toggle("selected", selected.includes(val));
+    }
+  });
+}
+
+// Custom category dropdown (multi-select)
 function initCategoryDropdown() {
   const trigger = document.getElementById("categoryTrigger");
   const panel = document.getElementById("categoryPanel");
   const hiddenInput = document.getElementById("categorySelect");
   const labelEl = trigger?.querySelector(".category-trigger-label");
+  const doneBtn = document.getElementById("categoryPanelDone");
   if (!trigger || !panel || !hiddenInput || !labelEl) return;
 
   function close() {
@@ -713,32 +926,56 @@ function initCategoryDropdown() {
     trigger.setAttribute("aria-expanded", "true");
   }
 
-  function select(value) {
-    const label = CATEGORY_LABELS[value] || value;
-    hiddenInput.value = value;
-    labelEl.textContent = label;
-    panel.querySelectorAll(".category-option.selected").forEach((el) => el.classList.remove("selected"));
-    const opt = panel.querySelector(`.category-option[data-value="${value}"]`);
-    if (opt) opt.classList.add("selected");
-    close();
+  function persistSelection() {
+    const selected = [];
+    panel.querySelectorAll(".category-option").forEach((el) => {
+      const checkbox = el.querySelector('input[type="checkbox"]');
+      const val = el.dataset.value;
+      if (checkbox?.checked && val) selected.push(val);
+    });
+    hiddenInput.value = JSON.stringify(selected.length ? selected : ["vital_technology"]);
+    updateCategoryLabel();
   }
 
   trigger.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (panel.hidden) open();
-    else close();
+    if (panel.hidden) {
+      syncCategoryPanelFromValue();
+      open();
+    } else {
+      persistSelection();
+      close();
+    }
   });
 
   panel.querySelectorAll(".category-option").forEach((el) => {
     el.addEventListener("click", (e) => {
       e.stopPropagation();
-      const val = el.dataset.value;
-      if (val) select(val);
+      const checkbox = el.querySelector('input[type="checkbox"]');
+      if (checkbox) {
+        checkbox.checked = !checkbox.checked;
+        el.classList.toggle("selected", checkbox.checked);
+      }
     });
   });
 
-  document.addEventListener("click", () => close());
+  if (doneBtn) {
+    doneBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      persistSelection();
+      close();
+    });
+  }
+
+  document.addEventListener("click", () => {
+    if (!panel.hidden) {
+      persistSelection();
+      close();
+    }
+  });
   panel.addEventListener("click", (e) => e.stopPropagation());
+
+  updateCategoryLabel();
 }
 
 // Wire up when DOM ready
@@ -791,5 +1028,17 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("authForm")?.addEventListener("submit", handleAuthSubmit);
   document.getElementById("authModal")?.addEventListener("click", (e) => {
     if (e.target.id === "authModal") closeAuthModal();
+  });
+  document.getElementById("savePresetBtn")?.addEventListener("click", () => openPresetModal());
+  document.getElementById("presetModalSave")?.addEventListener("click", () => savePresetFromModal());
+  document.getElementById("presetModalCancel")?.addEventListener("click", () => closePresetModal());
+  document.getElementById("presetNameInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      savePresetFromModal();
+    }
+  });
+  document.getElementById("presetModal")?.addEventListener("click", (e) => {
+    if (e.target.id === "presetModal") closePresetModal();
   });
 });

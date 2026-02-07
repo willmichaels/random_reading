@@ -82,3 +82,15 @@ def save_user_links(username: str, links: list):
     if not isinstance(links, list):
         return
     get_storage().save_user_links(username, links)
+
+
+def get_presets(username: str) -> list:
+    """Get user's presets."""
+    return get_storage().get_presets(username)
+
+
+def save_presets(username: str, presets: list):
+    """Save user's presets."""
+    if not isinstance(presets, list):
+        return
+    get_storage().save_presets(username, presets)
