@@ -4,7 +4,7 @@ Handles auth and read-log API only. Static files served from public/ by Vercel.
 """
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from auth import (
     SESSION_COOKIE,
@@ -17,6 +17,11 @@ from auth import (
 )
 
 app = FastAPI(title="Random Technical Wiki API", version="1.0.0")
+
+
+@app.get("/")
+async def root():
+    return RedirectResponse("/index.html")
 
 
 @app.post("/api/register")
