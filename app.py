@@ -26,32 +26,40 @@ async def root():
 
 @app.post("/api/register")
 async def api_register(request: Request):
-    body = await request.json()
-    username = (body.get("username") or "").strip()
-    password = body.get("password") or ""
-    err = auth_register(username, password)
-    if err:
-        return JSONResponse({"error": err}, status_code=400)
-    return JSONResponse({"ok": True})
+    try:
+        body = await request.json()
+        username = (body.get("username") or "").strip()
+        password = body.get("password") or ""
+        err = auth_register(username, password)
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+        return JSONResponse({"ok": True})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"error": f"Storage error: {e}"}, status_code=503)
 
 
 @app.post("/api/login")
 async def api_login(request: Request):
-    body = await request.json()
-    username = (body.get("username") or "").strip()
-    password = body.get("password") or ""
-    session_id = auth_login(username, password)
-    if not session_id:
-        return JSONResponse({"error": "Invalid username or password"}, status_code=401)
-    response = JSONResponse({"ok": True, "username": username})
-    response.set_cookie(
-        key=SESSION_COOKIE,
-        value=session_id,
-        httponly=True,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 30,
-    )
-    return response
+    try:
+        body = await request.json()
+        username = (body.get("username") or "").strip()
+        password = body.get("password") or ""
+        session_id = auth_login(username, password)
+        if not session_id:
+            return JSONResponse({"error": "Invalid username or password"}, status_code=401)
+        response = JSONResponse({"ok": True, "username": username})
+        response.set_cookie(
+            key=SESSION_COOKIE,
+            value=session_id,
+            httponly=True,
+            samesite="lax",
+            max_age=60 * 60 * 24 * 30,
+        )
+        return response
+    except (ValueError, Exception) as e:
+        return JSONResponse({"error": str(e) if isinstance(e, ValueError) else f"Storage error: {e}"}, status_code=503)
 
 
 @app.post("/api/logout")

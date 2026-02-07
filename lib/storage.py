@@ -136,13 +136,21 @@ class RedisStorage(StorageBackend):
     SESSIONS_KEY = "wiki:sessions"
 
     def __init__(self):
-        # Support both Vercel KV and Upstash env var names
+        from upstash_redis import Redis
+        # Support Vercel KV, Upstash, and Redis.from_env() env var names
         url = os.environ.get("KV_REST_API_URL") or os.environ.get("UPSTASH_REDIS_REST_URL")
         token = os.environ.get("KV_REST_API_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN")
-        if not url or not token:
-            raise ValueError("Redis requires KV_REST_API_URL/KV_REST_API_TOKEN or UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN")
-        from upstash_redis import Redis
-        self._redis = Redis(url=url, token=token)
+        if url and token:
+            self._redis = Redis(url=url, token=token)
+        else:
+            try:
+                self._redis = Redis.from_env()
+            except Exception as e:
+                raise ValueError(
+                    "Redis requires KV_REST_API_URL/KV_REST_API_TOKEN or "
+                    "UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN. "
+                    f"Ensure Redis is connected in Vercel Storage. ({e})"
+                ) from e
 
     def get_user(self, username: str) -> str | None:
         val = self._redis.hget(self.USERS_KEY, username)
@@ -194,6 +202,13 @@ def _get_storage() -> StorageBackend:
     token = os.environ.get("KV_REST_API_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN")
     if url and token:
         return RedisStorage()
+    # On Vercel, do not fall back to JsonStorage (filesystem is read-only)
+    if os.environ.get("VERCEL"):
+        raise ValueError(
+            "Redis is required on Vercel. Add a Redis database in Vercel Storage "
+            "and connect it to this project so KV_REST_API_URL/KV_REST_API_TOKEN or "
+            "UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN are set."
+        )
     return JsonStorage()
 
 
