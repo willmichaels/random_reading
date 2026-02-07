@@ -189,9 +189,17 @@ class RedisStorage(StorageBackend):
 
     def __init__(self):
         from upstash_redis import Redis
-        # Support Vercel KV, Upstash, and Redis.from_env() env var names
-        url = os.environ.get("KV_REST_API_URL") or os.environ.get("UPSTASH_REDIS_REST_URL")
-        token = os.environ.get("KV_REST_API_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN")
+        # Support Vercel KV, Upstash, and Vercel Storage (storage_* prefix) env var names
+        url = (
+            os.environ.get("KV_REST_API_URL")
+            or os.environ.get("storage_KV_REST_API_URL")
+            or os.environ.get("UPSTASH_REDIS_REST_URL")
+        )
+        token = (
+            os.environ.get("KV_REST_API_TOKEN")
+            or os.environ.get("storage_KV_REST_API_TOKEN")
+            or os.environ.get("UPSTASH_REDIS_REST_TOKEN")
+        )
         if url and token:
             self._redis = Redis(url=url, token=token)
         else:
@@ -251,12 +259,24 @@ class RedisStorage(StorageBackend):
 def _get_storage() -> StorageBackend:
     """Return storage backend based on environment."""
     # Redis Cloud / Redis Labs (redis:// URL)
-    redis_url = (os.environ.get("REDIS_URL") or "").strip()
+    redis_url = (
+        os.environ.get("REDIS_URL") or os.environ.get("storage_REDIS_URL") or ""
+    ).strip()
     if redis_url and redis_url.startswith("redis://"):
         return RedisUrlStorage(redis_url)
-    # Upstash REST API (Vercel KV, Upstash Marketplace)
-    url = (os.environ.get("KV_REST_API_URL") or os.environ.get("UPSTASH_REDIS_REST_URL") or "").strip()
-    token = (os.environ.get("KV_REST_API_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN") or "").strip()
+    # Upstash REST API (Vercel KV, Upstash Marketplace, Vercel Storage with storage_* prefix)
+    url = (
+        os.environ.get("KV_REST_API_URL")
+        or os.environ.get("storage_KV_REST_API_URL")
+        or os.environ.get("UPSTASH_REDIS_REST_URL")
+        or ""
+    ).strip()
+    token = (
+        os.environ.get("KV_REST_API_TOKEN")
+        or os.environ.get("storage_KV_REST_API_TOKEN")
+        or os.environ.get("UPSTASH_REDIS_REST_TOKEN")
+        or ""
+    ).strip()
     if url and token:
         return RedisStorage()
     # On Vercel: try RedisStorage (uses Redis.from_env() which may find vars we don't check)

@@ -31,8 +31,11 @@ async def redis_status():
     """Debug: show which Redis env vars are available (keys only, no values)."""
     redis_keys = [
         "REDIS_URL",
+        "storage_REDIS_URL",
         "KV_REST_API_URL",
+        "storage_KV_REST_API_URL",
         "KV_REST_API_TOKEN",
+        "storage_KV_REST_API_TOKEN",
         "UPSTASH_REDIS_REST_URL",
         "UPSTASH_REDIS_REST_TOKEN",
     ]
