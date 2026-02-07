@@ -369,6 +369,16 @@ function removeUserLink(index) {
   renderUserLinks();
 }
 
+function removeUserLinkByUrl(url) {
+  const links = getUserLinks();
+  const idx = links.findIndex((l) => l.url === url);
+  if (idx >= 0) {
+    links.splice(idx, 1);
+    saveUserLinks(links);
+    renderUserLinks();
+  }
+}
+
 function addUserLink(url, title, notes = "") {
   const links = getUserLinks();
   if (links.some((l) => l.url === url)) return;
@@ -777,6 +787,7 @@ async function fetchArticle() {
   let title = "";
   let categoryLabel = "";
   let logCategory = "my_links";
+  let isFromLinks = false;
 
   try {
     const userLinks = getUserLinks();
@@ -809,6 +820,7 @@ async function fetchArticle() {
       title = pick.title || deriveTitleFromUrl(url);
       categoryLabel = "Links";
       logCategory = "my_links";
+      isFromLinks = true;
     }
   } catch (err) {
     console.error("fetchArticle error:", err);
@@ -824,18 +836,24 @@ async function fetchArticle() {
   let html = `
     <div>Read: <a href="${escapeHtml(url)}" target="_blank">${escapeHtml(title)}</a></div>
     <div class="meta">Category: ${escapeHtml(categoryLabel)}</div>
-    <div class="meta" style="margin-top: 12px;"><span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}">Log</span> &middot; <span class="add-to-currently-reading-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}">Reading</span></div>
+    <div class="meta" style="margin-top: 12px;"><span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}" data-from-links="${isFromLinks}">Log</span> &middot; <span class="add-to-currently-reading-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}" data-from-links="${isFromLinks}">Reading</span></div>
   `;
 
   resultDiv.innerHTML = html;
 
   resultDiv.querySelectorAll(".log-article-link").forEach((el) => {
     el.addEventListener("click", () => {
+      if (el.dataset.fromLinks === "true") {
+        removeUserLinkByUrl(el.dataset.url);
+      }
       logArticle(el.dataset.url, el.dataset.title, el.dataset.category);
     });
   });
   resultDiv.querySelectorAll(".add-to-currently-reading-link").forEach((el) => {
     el.addEventListener("click", () => {
+      if (el.dataset.fromLinks === "true") {
+        removeUserLinkByUrl(el.dataset.url);
+      }
       addToCurrentlyReading(el.dataset.url, el.dataset.title, el.dataset.category);
     });
   });
