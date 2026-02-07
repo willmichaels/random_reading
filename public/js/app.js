@@ -144,6 +144,13 @@ function updateLogEntryNote(index, notes) {
   saveReadLog(log);
 }
 
+function updateLogEntryTitle(index, title) {
+  const log = getReadLog();
+  if (index < 0 || index >= log.length) return;
+  log[index] = { ...log[index], title: (title || "").trim() };
+  saveReadLog(log);
+}
+
 function removeFromLog(index) {
   const log = getReadLog();
   log.splice(index, 1);
@@ -246,6 +253,14 @@ function updateUserLinkNote(index, notes) {
   const links = getUserLinks();
   if (index < 0 || index >= links.length) return;
   links[index] = { ...links[index], notes: (notes || "").trim() };
+  saveUserLinks(links);
+}
+
+function updateUserLinkTitle(index, title) {
+  const links = getUserLinks();
+  if (index < 0 || index >= links.length) return;
+  const trimmed = (title || "").trim();
+  links[index] = { ...links[index], title: trimmed || deriveTitleFromUrl(links[index].url) };
   saveUserLinks(links);
 }
 
@@ -378,19 +393,52 @@ function renderUserLinks() {
   container.innerHTML = links
     .map(
       (e, i) => `
-    <div class="user-link-entry">
+    <div class="user-link-entry" data-index="${i}">
       <div class="entry-main">
-        <a href="${escapeHtml(e.url)}" target="_blank">${escapeHtml(e.title || e.url)}</a>
+        <span class="entry-title-wrap"><a href="${escapeHtml(e.url)}" target="_blank">${escapeHtml(e.title || e.url)}</a></span>
         <span class="user-link-meta">${escapeHtml(e.date ? formatLogDate(e.date) : "—")}</span>
         <input type="text" class="entry-note" data-index="${i}" placeholder="Add note..." value="${escapeHtml(e.notes || "")}" />
       </div>
       <span class="user-link-actions">
+        <span class="user-link-edit" data-index="${i}">Edit</span>
         <span class="user-link-log" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title || deriveTitleFromUrl(e.url))}">Log</span>
         <span class="user-link-remove" data-index="${i}">Remove</span>
       </span>
     </div>`
     )
     .join("");
+  container.querySelectorAll(".user-link-edit").forEach((el) => {
+    el.addEventListener("click", () => {
+      const entry = el.closest(".user-link-entry");
+      const index = Number(el.dataset.index);
+      const wrap = entry?.querySelector(".entry-title-wrap");
+      const link = wrap?.querySelector("a");
+      if (!wrap || !link || index < 0) return;
+      const currentTitle = (getUserLinks()[index]?.title || getUserLinks()[index]?.url || "").trim();
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "entry-title-edit";
+      input.value = currentTitle;
+      wrap.replaceChild(input, link);
+      input.focus();
+      input.select();
+      const save = () => {
+        const val = input.value.trim();
+        updateUserLinkTitle(index, val || undefined);
+        renderUserLinks();
+      };
+      input.addEventListener("blur", save);
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          input.blur();
+        } else if (ev.key === "Escape") {
+          ev.preventDefault();
+          renderUserLinks();
+        }
+      });
+    });
+  });
   container.querySelectorAll(".user-link-log").forEach((el) => {
     el.addEventListener("click", () =>
       logArticle(el.dataset.url, el.dataset.title, "my_links")
@@ -415,16 +463,51 @@ function renderReadLog() {
   container.innerHTML = log
     .map(
       (e, i) => `
-    <div class="read-log-entry">
+    <div class="read-log-entry" data-index="${i}">
       <div class="entry-main">
-        <a href="${escapeHtml(e.url)}" target="_blank">${escapeHtml(e.title)}</a>
+        <span class="entry-title-wrap"><a href="${escapeHtml(e.url)}" target="_blank">${escapeHtml(e.title)}</a></span>
         <span class="read-log-meta">${escapeHtml(e.category)} &middot; ${formatLogDate(e.date)}</span>
         <input type="text" class="entry-note" data-index="${i}" placeholder="Add note..." value="${escapeHtml(e.notes || "")}" />
       </div>
-      <span class="read-log-remove" data-index="${i}">Remove</span>
+      <span class="read-log-actions">
+        <span class="read-log-edit" data-index="${i}">Edit</span>
+        <span class="read-log-remove" data-index="${i}">Remove</span>
+      </span>
     </div>`
     )
     .join("");
+  container.querySelectorAll(".read-log-edit").forEach((el) => {
+    el.addEventListener("click", () => {
+      const entry = el.closest(".read-log-entry");
+      const index = Number(el.dataset.index);
+      const wrap = entry?.querySelector(".entry-title-wrap");
+      const link = wrap?.querySelector("a");
+      if (!wrap || !link || index < 0) return;
+      const currentTitle = (getReadLog()[index]?.title || "").trim();
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "entry-title-edit";
+      input.value = currentTitle;
+      wrap.replaceChild(input, link);
+      input.focus();
+      input.select();
+      const save = () => {
+        const val = input.value.trim();
+        updateLogEntryTitle(index, val || currentTitle);
+        renderReadLog();
+      };
+      input.addEventListener("blur", save);
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          input.blur();
+        } else if (ev.key === "Escape") {
+          ev.preventDefault();
+          renderReadLog();
+        }
+      });
+    });
+  });
   container.querySelectorAll(".read-log-remove").forEach((el) => {
     el.addEventListener("click", () => removeFromLog(Number(el.dataset.index)));
   });
