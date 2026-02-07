@@ -2,44 +2,128 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Random Technical Wiki</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>stochastic reader</title>
     <style>
-        body { font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #f4f4f9; }
-        .container { background: white; max-width: 600px; margin: auto; padding: 40px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        h1 { color: #333; margin-bottom: 25px; }
-        
-        select { padding: 10px; font-size: 16px; border-radius: 5px; border: 1px solid #ccc; margin-right: 10px; min-width: 300px; }
-        
-        button { background-color: #007bff; color: white; border: none; padding: 12px 25px; font-size: 16px; border-radius: 5px; cursor: pointer; transition: background 0.3s; }
-        button:hover { background-color: #0056b3; }
-        
-        #result { margin-top: 30px; font-size: 18px; min-height: 40px;}
-        a { color: #007bff; text-decoration: none; font-weight: bold; font-size: 20px; }
+        /* Base – Notion-style flat design */
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: #ffffff; color: #1a1a1a; margin: 0; padding: 0; overflow-x: hidden; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 48px 24px; text-align: left; }
+
+        h1 { color: #000; font-weight: 600; font-size: 28px; margin: 0 0 32px 0; }
+
+        /* Three-column layout on desktop */
+        .three-columns { display: flex; flex-direction: column; gap: 48px; margin-top: 32px; }
+        @media (min-width: 900px) {
+            .three-columns { flex-direction: row; align-items: flex-start; gap: 32px; }
+            .three-columns .column { flex: 1; min-width: 0; }
+        }
+
+        /* Links */
+        a { color: #2c6ee8; text-decoration: none; }
         a:hover { text-decoration: underline; }
-        .meta { color: #666; font-size: 14px; margin-top: 5px; }
-        .download-link { font-size: 16px; font-weight: normal; cursor: pointer; }
-        .download-link:hover { text-decoration: underline; }
-        .log-article-link { color: #007bff; display: inline-block; }
-        #readLogSection { margin-top: 40px; padding-top: 30px; border-top: 1px solid #e0e0e0; text-align: left; }
-        #readLogSection h2 { color: #333; font-size: 18px; margin-bottom: 15px; }
-        .read-log-empty { color: #999; font-size: 14px; }
-        .read-log-entry { margin-bottom: 12px; padding: 8px 0; border-bottom: 1px solid #eee; }
-        .read-log-entry:last-child { border-bottom: none; }
-        .read-log-entry a { font-size: 16px; }
-        .read-log-meta { display: block; color: #666; font-size: 13px; margin-top: 4px; }
-        .read-log-remove { font-size: 13px; color: #999; cursor: pointer; margin-left: 8px; }
-        .read-log-remove:hover { color: #c00; text-decoration: underline; }
-        #authHeader { margin-bottom: 20px; font-size: 14px; color: #666; }
+
+        /* Buttons */
+        button { background: #2c6ee8; color: #fff; border: none; padding: 10px 20px; font-size: 15px; cursor: pointer; font-family: inherit; border-radius: 8px; -webkit-tap-highlight-color: transparent; }
+        button:hover { background: #2563d9; }
+
+        /* Auth header */
+        #authHeader { margin-bottom: 24px; font-size: 14px; color: #6b6b6b; }
         #authHeader a { font-size: 14px; font-weight: normal; }
-        .auth-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: center; justify-content: center; }
+
+        /* Source selector – minimal pills */
+        .source-selector { margin-bottom: 20px; display: flex; gap: 20px; flex-wrap: wrap; }
+        .source-selector label { font-size: 14px; color: #1a1a1a; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+        .source-selector input { margin: 0; }
+        .source-selector label:has(input:checked) { font-weight: 500; }
+
+        /* Category row */
+        .category-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+        .category-dropdown { position: relative; display: inline-block; }
+        .category-trigger { display: flex; align-items: center; justify-content: space-between; min-width: 280px; padding: 10px 12px; background: #fafafa; color: #1a1a1a; font-size: 15px; text-align: left; border: none; cursor: pointer; }
+        .category-trigger:hover { background: #f0f0f0; }
+        .category-trigger-arrow { opacity: 0.6; font-size: 11px; }
+        .category-panel { position: absolute; top: 100%; left: 0; margin-top: 4px; min-width: 280px; max-height: 320px; overflow-y: auto; background: #fafafa; z-index: 50; }
+        .category-panel[hidden] { display: none; }
+        .category-group-label { padding: 8px 12px; font-size: 12px; color: #8e8e8e; text-transform: uppercase; letter-spacing: 0.5px; }
+        .category-option { padding: 10px 12px; font-size: 14px; color: #1a1a1a; cursor: pointer; }
+        .category-option:hover { background: #f5f5f5; }
+        .category-option.selected { background: #f0f0f0; font-weight: 500; }
+
+        /* Result area */
+        #result { margin-top: 32px; font-size: 18px; min-height: 40px; }
+        #result a { font-weight: 600; font-size: 20px; }
+        .meta { color: #6b6b6b; font-size: 14px; margin-top: 6px; }
+        .download-link, .log-article-link { font-size: 15px; font-weight: normal; cursor: pointer; display: inline-block; }
+        .download-link:hover, .log-article-link:hover { text-decoration: underline; }
+
+        /* Sections – no borders, generous spacing */
+        #articleSelectorSection h2, #myLinksSection h2, #readLogSection h2 { color: #000; font-size: 18px; font-weight: 600; margin: 0 0 16px 0; }
+        .column { padding: 0; }
+        .read-log-empty, .my-links-empty { color: #8e8e8e; font-size: 14px; }
+        .read-log-entry { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+        .read-log-entry .entry-main { flex: 1; min-width: 0; }
+        .read-log-entry, .user-link-entry { margin-bottom: 16px; padding: 0; }
+        .read-log-entry:last-child, .user-link-entry:last-child { margin-bottom: 0; }
+        .read-log-entry a, .user-link-entry a { font-size: 15px; }
+        .read-log-meta, .user-link-meta { display: block; color: #6b6b6b; font-size: 13px; margin-top: 4px; }
+        .read-log-remove, .user-link-remove { font-size: 13px; color: #2c6ee8; cursor: pointer; margin-left: 8px; }
+        .read-log-remove:hover, .user-link-remove:hover { text-decoration: underline; }
+        .user-link-entry { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+        .user-link-entry .entry-main { flex: 1; min-width: 0; }
+        .entry-note { margin-top: 8px; width: 100%; padding: 6px 0; font-size: 13px; color: #1a1a1a; border: none; border-bottom: 1px solid #e8e8e8; background: transparent; font-family: inherit; }
+        .entry-note:focus { outline: none; border-bottom-color: #1a1a1a; }
+        .entry-note::placeholder { color: #8e8e8e; }
+
+        /* Add link inputs – flat, minimal */
+        .add-link-row { display: flex; gap: 10px; margin-bottom: 12px; }
+        .add-link-row input { flex: 1; padding: 10px 0; font-size: 14px; border: none; border-bottom: 1px solid #e8e8e8; background: transparent; font-family: inherit; }
+        .add-link-row input:focus { outline: none; border-bottom-color: #1a1a1a; }
+        .add-link-row input::placeholder { color: #8e8e8e; }
+
+        /* Auth modal */
+        .auth-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 100; align-items: center; justify-content: center; }
         .auth-modal.visible { display: flex; }
-        .auth-modal-content { background: white; padding: 24px; border-radius: 8px; max-width: 320px; width: 90%; }
-        .auth-modal h3 { margin: 0 0 16px 0; font-size: 18px; }
-        .auth-modal input { display: block; width: 100%; padding: 10px; margin-bottom: 12px; font-size: 14px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+        .auth-modal-content { background: #fff; padding: 28px; max-width: 320px; width: 90%; }
+        .auth-modal h3 { margin: 0 0 20px 0; font-size: 18px; font-weight: 600; color: #000; }
+        .auth-modal input { display: block; width: 100%; padding: 10px 0; margin-bottom: 16px; font-size: 14px; border: none; border-bottom: 1px solid #e8e8e8; background: transparent; font-family: inherit; }
+        .auth-modal input:focus { outline: none; border-bottom-color: #1a1a1a; }
         .auth-modal button { width: 100%; padding: 10px; margin-top: 4px; }
         .auth-modal .auth-error { color: #c00; font-size: 13px; margin-bottom: 12px; }
-        .auth-modal .auth-close { margin-top: 12px; text-align: center; }
+        .auth-modal .auth-close { margin-top: 16px; text-align: center; }
         .auth-modal .auth-close a { font-size: 13px; cursor: pointer; }
+
+        /* Mobile responsive */
+        @media (max-width: 640px) {
+            .container { padding: 24px 16px; }
+            h1 { font-size: 24px; margin-bottom: 24px; }
+
+            .category-row { flex-direction: column; align-items: stretch; gap: 12px; }
+            .category-dropdown { width: 100%; }
+            .category-trigger { min-width: 0; width: 100%; min-height: 44px; }
+            .category-panel { min-width: 0; width: 100%; max-width: calc(100vw - 32px); left: 0; right: 0; box-sizing: border-box; }
+            .category-option { min-height: 44px; display: flex; align-items: center; }
+            .category-row button { width: 100%; padding: 12px 20px; min-height: 44px; }
+
+            .source-selector { gap: 12px; margin-bottom: 16px; }
+
+            #result { font-size: 16px; margin-top: 24px; }
+            #result a { font-size: 18px; }
+
+            .add-link-row { flex-direction: column; gap: 8px; }
+            .add-link-row input { width: 100%; }
+            .add-link-row button { width: 100%; min-height: 44px; }
+
+            .three-columns { margin-top: 24px; gap: 32px; }
+            #articleSelectorSection h2, #myLinksSection h2, #readLogSection h2 { font-size: 16px; margin-bottom: 12px; }
+
+            .read-log-entry, .user-link-entry { flex-direction: column; align-items: stretch; gap: 8px; }
+            .read-log-remove, .user-link-remove { margin-left: 0; margin-top: 4px; }
+
+            .auth-modal-content { padding: 24px 20px; margin: 16px; width: calc(100% - 32px); max-width: none; }
+            button { min-height: 44px; padding: 12px 20px; }
+            .auth-modal { align-items: flex-start; padding: 16px 0; overflow-y: auto; }
+        }
     </style>
 </head>
 <body>
@@ -64,54 +148,77 @@
             </div>
         </div>
 
-        <h1>Random Technical Wiki</h1>
-        
-        <div>
-            <select id="categorySelect">
-                <optgroup label="Vital Articles (Level 4)">
-                    <option value="vital_people">People</option>
-                    <option value="vital_history">History</option>
-                    <option value="vital_geography">Geography</option>
-                    <option value="vital_arts">Arts</option>
-                    <option value="vital_philosophy_religion">Philosophy and religion</option>
-                    <option value="vital_everyday_life">Everyday life</option>
-                    <option value="vital_society_social_sciences">Society and social sciences</option>
-                    <option value="vital_biology_health_sciences">Biology and health sciences</option>
-                    <option value="vital_physical_sciences">Physical sciences</option>
-                    <option value="vital_technology">Technology</option>
-                    <option value="vital_mathematics">Mathematics</option>
-                </optgroup>
-                <optgroup label="Good Articles">
-                    <option value="agriculture_food_drink">Agriculture, food and drink</option>
-                    <option value="art_architecture">Art and architecture</option>
-                    <option value="engineering_technology">Engineering and technology</option>
-                    <option value="geography_places">Geography and places</option>
-                    <option value="history">History</option>
-                    <option value="language_literature">Language and literature</option>
-                    <option value="mathematics">Mathematics</option>
-                    <option value="media_drama">Media and drama</option>
-                    <option value="music">Music</option>
-                    <option value="natural_sciences">Natural sciences</option>
-                    <option value="philosophy_religion">Philosophy and religion</option>
-                    <option value="social_sciences_society">Social sciences and society</option>
-                    <option value="sports_recreation">Sports and recreation</option>
-                    <option value="video_games">Video games</option>
-                    <option value="warfare">Warfare</option>
-                    <option value="all_good">All good articles</option>
-                </optgroup>
-            </select>
-            <button onclick="fetchArticle()">Go</button>
-        </div>
+        <div class="three-columns">
+            <div class="column" id="myLinksSection">
+                <h2>My links</h2>
+                <div class="add-link-row">
+                    <input type="text" id="newLinkInput" placeholder="URLs, comma-separated" />
+                    <button type="button" id="addLinkBtn">Add</button>
+                </div>
+                <div class="add-link-row">
+                    <input type="text" id="newLinkDisplayName" placeholder="Display names, comma-separated (optional)" />
+                </div>
+                <div id="userLinksList"></div>
+            </div>
 
-        <div id="result"></div>
+            <div class="column" id="articleSelectorSection">
+                <h2>Article selector</h2>
+                <div class="source-selector">
+                    <label><input type="radio" name="source" value="wikipedia" checked> Wikipedia only</label>
+                    <label><input type="radio" name="source" value="my_links"> My links only</label>
+                    <label><input type="radio" name="source" value="both"> Both</label>
+                </div>
+                <div class="category-row">
+                    <div class="category-dropdown">
+                        <button type="button" class="category-trigger" id="categoryTrigger" aria-haspopup="listbox" aria-expanded="false">
+                            <span class="category-trigger-label">Technology</span>
+                            <span class="category-trigger-arrow">&#9662;</span>
+                        </button>
+                        <input type="hidden" id="categorySelect" value="vital_technology">
+                        <div class="category-panel" id="categoryPanel" role="listbox" hidden>
+                            <div class="category-group-label">Vital Articles (Level 4)</div>
+                            <div class="category-option" data-value="vital_people" role="option">People</div>
+                            <div class="category-option" data-value="vital_history" role="option">History</div>
+                            <div class="category-option" data-value="vital_geography" role="option">Geography</div>
+                            <div class="category-option" data-value="vital_arts" role="option">Arts</div>
+                            <div class="category-option" data-value="vital_philosophy_religion" role="option">Philosophy and religion</div>
+                            <div class="category-option" data-value="vital_everyday_life" role="option">Everyday life</div>
+                            <div class="category-option" data-value="vital_society_social_sciences" role="option">Society and social sciences</div>
+                            <div class="category-option" data-value="vital_biology_health_sciences" role="option">Biology and health sciences</div>
+                            <div class="category-option" data-value="vital_physical_sciences" role="option">Physical sciences</div>
+                            <div class="category-option selected" data-value="vital_technology" role="option">Technology</div>
+                            <div class="category-option" data-value="vital_mathematics" role="option">Mathematics</div>
+                            <div class="category-group-label">Good Articles</div>
+                            <div class="category-option" data-value="agriculture_food_drink" role="option">Agriculture, food and drink</div>
+                            <div class="category-option" data-value="art_architecture" role="option">Art and architecture</div>
+                            <div class="category-option" data-value="engineering_technology" role="option">Engineering and technology</div>
+                            <div class="category-option" data-value="geography_places" role="option">Geography and places</div>
+                            <div class="category-option" data-value="history" role="option">History</div>
+                            <div class="category-option" data-value="language_literature" role="option">Language and literature</div>
+                            <div class="category-option" data-value="mathematics" role="option">Mathematics</div>
+                            <div class="category-option" data-value="media_drama" role="option">Media and drama</div>
+                            <div class="category-option" data-value="music" role="option">Music</div>
+                            <div class="category-option" data-value="natural_sciences" role="option">Natural sciences</div>
+                            <div class="category-option" data-value="philosophy_religion" role="option">Philosophy and religion</div>
+                            <div class="category-option" data-value="social_sciences_society" role="option">Social sciences and society</div>
+                            <div class="category-option" data-value="sports_recreation" role="option">Sports and recreation</div>
+                            <div class="category-option" data-value="video_games" role="option">Video games</div>
+                            <div class="category-option" data-value="warfare" role="option">Warfare</div>
+                            <div class="category-option" data-value="all_good" role="option">All good articles</div>
+                        </div>
+                    </div>
+                    <button onclick="fetchArticle()">Go</button>
+                </div>
+                <div id="result"></div>
+            </div>
 
-        <div id="readLogSection">
-            <h2>Read log</h2>
-            <div id="readLogList"></div>
+            <div class="column" id="readLogSection">
+                <h2>Read log</h2>
+                <div id="readLogList"></div>
+            </div>
         </div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="js/app.js" defer></script>
 </body>
 </html>

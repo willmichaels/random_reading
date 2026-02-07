@@ -70,3 +70,15 @@ def save_log(username: str, log: list):
     if not isinstance(log, list):
         return
     get_storage().save_log(username, log)
+
+
+def get_user_links(username: str) -> list:
+    """Get user's custom links."""
+    return get_storage().get_user_links(username)
+
+
+def save_user_links(username: str, links: list):
+    """Save user's custom links for user."""
+    if not isinstance(links, list):
+        return
+    get_storage().save_user_links(username, links)

@@ -1,6 +1,6 @@
 /**
  * Random Technical Wiki - Static client-side implementation
- * Fetches Vital Articles and Good Articles via MediaWiki API, parses content, supports text/PDF download.
+ * Fetches Vital Articles and Good Articles via MediaWiki API, parses content.
  */
 
 const VITAL_SOURCES = {
@@ -63,7 +63,8 @@ const CATEGORY_LABELS = {
   sports_recreation: "Sports and recreation",
   video_games: "Video games",
   warfare: "Warfare",
-  all_good: "All good articles"
+  all_good: "All good articles",
+  my_links: "My links"
 };
 
 const API_BASE = "https://en.wikipedia.org/w/api.php";
@@ -76,10 +77,12 @@ const HEADERS = {
 const ARTICLES_CACHE = {};
 
 const READ_LOG_KEY = "random_wiki_read_log";
+const USER_LINKS_KEY = "random_wiki_user_links";
 
 // Auth state (set when backend is available and user is logged in)
 let loggedInUser = null;
 let readLogCache = null;
+let userLinksCache = null;
 
 const fetchOpts = { credentials: "include" };
 
@@ -121,8 +124,9 @@ function logArticle(url, title, category) {
   const log = getReadLog();
   const categoryLabel = CATEGORY_LABELS[category] || category;
   const existing = log.findIndex((e) => e.url === url);
-  const entry = { title, url, category: categoryLabel, date: new Date().toISOString() };
+  const entry = { title, url, category: categoryLabel, date: new Date().toISOString(), notes: "" };
   if (existing >= 0) {
+    entry.notes = log[existing].notes || "";
     log[existing] = entry;
   } else {
     log.unshift(entry);
@@ -131,11 +135,143 @@ function logArticle(url, title, category) {
   renderReadLog();
 }
 
+function updateLogEntryNote(index, notes) {
+  const log = getReadLog();
+  if (index < 0 || index >= log.length) return;
+  log[index] = { ...log[index], notes: (notes || "").trim() };
+  saveReadLog(log);
+}
+
 function removeFromLog(index) {
   const log = getReadLog();
   log.splice(index, 1);
   saveReadLog(log);
   renderReadLog();
+}
+
+// --- User links ---
+
+function normalizeUrl(input) {
+  let s = (input || "").trim();
+  if (!s) return null;
+  if (!/^https?:\/\//i.test(s)) s = "https://" + s;
+  try {
+    new URL(s);
+    return s;
+  } catch {
+    return null;
+  }
+}
+
+function deriveTitleFromUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes("wikipedia.org") && u.pathname.startsWith("/wiki/")) {
+      return decodeURIComponent(u.pathname.split("/wiki/")[1] || "").replace(/_/g, " ") || "Untitled";
+    }
+    const path = u.pathname.replace(/\/+$/, "").split("/").pop() || "";
+    const pathDecoded = decodeURIComponent(path);
+    return pathDecoded || u.hostname || "Untitled";
+  } catch {
+    return "Untitled";
+  }
+}
+
+function getUserLinks() {
+  if (loggedInUser !== null && userLinksCache !== null) {
+    return userLinksCache;
+  }
+  try {
+    const raw = localStorage.getItem(USER_LINKS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveUserLinks(links) {
+  if (loggedInUser !== null) {
+    userLinksCache = [...links];
+    apiFetch("/api/user-links", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ links })
+    }).catch((e) => console.error("Failed to sync user links:", e));
+    return;
+  }
+  try {
+    localStorage.setItem(USER_LINKS_KEY, JSON.stringify(links));
+  } catch (e) {
+    console.error("Failed to save user links:", e);
+  }
+}
+
+function addUserLinks(urlInput, displayNameInput) {
+  const urlStrings = (urlInput || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const names = (displayNameInput || "")
+    .split(",")
+    .map((s) => s.trim());
+
+  const links = getUserLinks();
+  const added = [];
+  for (let i = 0; i < urlStrings.length; i++) {
+    const url = normalizeUrl(urlStrings[i]);
+    if (!url || links.some((l) => l.url === url) || added.some((a) => a.url === url)) continue;
+    const displayName = names[i] || "";
+    const title = displayName || deriveTitleFromUrl(url);
+    added.push({ url, title, date: new Date().toISOString(), notes: "" });
+  }
+  if (!added.length) return 0;
+  links.push(...added);
+  saveUserLinks(links);
+  renderUserLinks();
+  return added.length;
+}
+
+function updateUserLinkNote(index, notes) {
+  const links = getUserLinks();
+  if (index < 0 || index >= links.length) return;
+  links[index] = { ...links[index], notes: (notes || "").trim() };
+  saveUserLinks(links);
+}
+
+function removeUserLink(index) {
+  const links = getUserLinks();
+  links.splice(index, 1);
+  saveUserLinks(links);
+  renderUserLinks();
+}
+
+function renderUserLinks() {
+  const container = document.getElementById("userLinksList");
+  if (!container) return;
+  const links = getUserLinks();
+  if (!links.length) {
+    container.innerHTML = '<p class="my-links-empty">No links yet. Add a URL above.</p>';
+    return;
+  }
+  container.innerHTML = links
+    .map(
+      (e, i) => `
+    <div class="user-link-entry">
+      <div class="entry-main">
+        <a href="${escapeHtml(e.url)}" target="_blank">${escapeHtml(e.title || e.url)}</a>
+        <span class="user-link-meta">${escapeHtml(e.date ? formatLogDate(e.date) : "—")}</span>
+        <input type="text" class="entry-note" data-index="${i}" placeholder="Add note..." value="${escapeHtml(e.notes || "")}" />
+      </div>
+      <span class="user-link-remove" data-index="${i}">Remove</span>
+    </div>`
+    )
+    .join("");
+  container.querySelectorAll(".user-link-remove").forEach((el) => {
+    el.addEventListener("click", () => removeUserLink(Number(el.dataset.index)));
+  });
+  container.querySelectorAll(".user-link-entry .entry-note").forEach((el) => {
+    el.addEventListener("blur", () => updateUserLinkNote(Number(el.dataset.index), el.value));
+  });
 }
 
 function renderReadLog() {
@@ -150,14 +286,20 @@ function renderReadLog() {
     .map(
       (e, i) => `
     <div class="read-log-entry">
-      <a href="${escapeHtml(e.url)}" target="_blank">${escapeHtml(e.title)}</a>
-      <span class="read-log-meta">${escapeHtml(e.category)} &middot; ${formatLogDate(e.date)}</span>
+      <div class="entry-main">
+        <a href="${escapeHtml(e.url)}" target="_blank">${escapeHtml(e.title)}</a>
+        <span class="read-log-meta">${escapeHtml(e.category)} &middot; ${formatLogDate(e.date)}</span>
+        <input type="text" class="entry-note" data-index="${i}" placeholder="Add note..." value="${escapeHtml(e.notes || "")}" />
+      </div>
       <span class="read-log-remove" data-index="${i}">Remove</span>
     </div>`
     )
     .join("");
   container.querySelectorAll(".read-log-remove").forEach((el) => {
     el.addEventListener("click", () => removeFromLog(Number(el.dataset.index)));
+  });
+  container.querySelectorAll(".read-log-entry .entry-note").forEach((el) => {
+    el.addEventListener("blur", () => updateLogEntryNote(Number(el.dataset.index), el.value));
   });
 }
 
@@ -253,270 +395,56 @@ async function getRandomArticle(category) {
 }
 
 /**
- * Clean reference text (mirror wiki_content._clean_reference_text).
- */
-function cleanReferenceText(raw) {
-  let text = raw.trim();
-  if (text.startsWith("^")) text = text.slice(1).trim();
-  while (text) {
-    let i = 0;
-    while (i < text.length && "abcdefghijklmnopqrstuvwxyz ".includes(text[i])) i++;
-    if (i > 0 && (i === text.length || text[i] === ">" || (text.slice(i, i + 1).trim() === "" && text.slice(0, 20).includes(">")))) {
-      text = text.slice(i).trim().replace(/^>/, "").trim();
-    } else {
-      break;
-    }
-  }
-  return text;
-}
-
-/**
- * Check if we should stop collecting body at this heading.
- */
-function bodyStopsAtHeading(text) {
-  const lower = text.trim().toLowerCase();
-  return ["see also", "references", "further reading", "external links"].includes(lower);
-}
-
-/**
- * Fetch article content via MediaWiki action=parse API.
- * Returns { title, bodyBlocks, references } or null on failure.
- */
-async function fetchArticleContent(articleUrl) {
-  if (!articleUrl.startsWith("https://en.wikipedia.org/wiki/")) return null;
-
-  const title = articleUrl.split("/wiki/")[1].replace(/_/g, " ");
-  const url = `${API_BASE}?action=parse&page=${encodeURIComponent(title)}&prop=text|displaytitle&format=json&origin=*`;
-
-  try {
-    const response = await fetch(url, { headers: HEADERS });
-    const data = await response.json();
-    if (data.error) return null;
-
-    const parse = data.query?.pages?.[Object.keys(data.query.pages)[0]]?.parse;
-    if (!parse) return null;
-
-    const html = parse.text["*"];
-    const displayTitle = parse.displaytitle || title;
-
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-    const content = doc.querySelector(".mw-parser-output") || doc.body;
-    if (!content) return { title: displayTitle, bodyBlocks: [], references: [] };
-
-    // Remove non-content elements
-    for (const tag of content.querySelectorAll("script, style, nav, table, figure")) {
-      tag.remove();
-    }
-
-    const bodyBlocks = [];
-    const stopHeadings = new Set(["see also", "references", "further reading", "external links"]);
-
-    for (const el of content.querySelectorAll("h2, h3, p")) {
-      const text = el.textContent.replace(/\s+/g, " ").trim();
-      if (!text) continue;
-
-      if (el.tagName === "H2" || el.tagName === "H3") {
-        if (stopHeadings.has(text.toLowerCase())) break;
-        bodyBlocks.push({ type: el.tagName.toLowerCase(), text });
-      } else {
-        bodyBlocks.push({ type: "p", text });
-      }
-    }
-
-    const references = [];
-    for (const li of content.querySelectorAll('li[id^="cite_note-"]')) {
-      const raw = li.textContent.replace(/\s+/g, " ").trim();
-      const cleaned = cleanReferenceText(raw);
-      if (cleaned) references.push(`[${references.length + 1}] ${cleaned}`);
-    }
-
-    return { title: displayTitle, bodyBlocks, references };
-  } catch (e) {
-    console.error("fetchArticleContent error:", e);
-    return null;
-  }
-}
-
-/**
- * Format plain text (mirror wiki_content.format_plain_text_with_references).
- */
-function formatPlainText(title, bodyBlocks, references) {
-  const parts = [];
-  for (const b of bodyBlocks) {
-    if (b.type === "h2" || b.type === "h3") parts.push("\n\n" + b.text + "\n");
-    else parts.push(b.text);
-  }
-  const body = parts.join("\n").trim();
-  const sections = [title, "=".repeat(title.length), "", body];
-  if (references.length) sections.push("", "References", "", references.join("\n\n"));
-  return sections.join("\n");
-}
-
-/**
- * Safe filename (mirror wiki_content.safe_filename).
- */
-function safeFilename(title, maxLen = 80) {
-  return title
-    .split("")
-    .map((c) => (/[a-zA-Z0-9 \-_]/.test(c) ? c : "_"))
-    .join("")
-    .slice(0, maxLen);
-}
-
-/**
- * Trigger download of a blob.
- */
-function downloadBlob(blob, filename) {
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
-}
-
-/**
- * Build PDF with jsPDF (title, TOC, body, references).
- */
-function buildPdf(title, bodyBlocks, references) {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  const margin = 20;
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const lineWidth = pageWidth - 2 * margin;
-  let y = margin;
-
-  // Title
-  doc.setFontSize(18);
-  doc.setFont("helvetica", "bold");
-  const titleLines = doc.splitTextToSize(title, lineWidth);
-  doc.text(titleLines, margin, y);
-  y += titleLines.length * 8 + 10;
-
-  // Table of Contents
-  const tocEntries = bodyBlocks.filter((b) => b.type === "h2" || b.type === "h3");
-  if (tocEntries.length || references.length) {
-    doc.setFontSize(14);
-    doc.text("Table of Contents", margin, y);
-    y += 10;
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "normal");
-    for (const b of tocEntries) {
-      const indent = b.type === "h3" ? 8 : 0;
-      doc.text("  ".repeat(b.type === "h3" ? 2 : 0) + b.text, margin + indent, y);
-      y += 6;
-    }
-    if (references.length) {
-      doc.text("References", margin, y);
-      y += 6;
-    }
-    y += 10;
-  }
-
-  doc.setFontSize(11);
-  doc.setFont("helvetica", "normal");
-
-  for (const b of bodyBlocks) {
-    if (y > 270) {
-      doc.addPage();
-      y = margin;
-    }
-    if (b.type === "h2") {
-      doc.setFontSize(14);
-      doc.setFont("helvetica", "bold");
-      doc.text(b.text, margin, y);
-      y += 8;
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "normal");
-    } else if (b.type === "h3") {
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "bold");
-      doc.text(b.text, margin, y);
-      y += 7;
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "normal");
-    } else {
-      const lines = doc.splitTextToSize(b.text, lineWidth);
-      doc.text(lines, margin, y);
-      y += lines.length * 5 + 3;
-    }
-  }
-
-  if (references.length) {
-    if (y > 250) {
-      doc.addPage();
-      y = margin;
-    }
-    y += 10;
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.text("References", margin, y);
-    y += 8;
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "normal");
-    for (const ref of references) {
-      if (y > 270) {
-        doc.addPage();
-        y = margin;
-      }
-      const lines = doc.splitTextToSize(ref, lineWidth);
-      doc.text(lines, margin, y);
-      y += lines.length * 5 + 4;
-    }
-  }
-
-  return doc;
-}
-
-/**
- * Download as plain text.
- */
-async function downloadTxt(url) {
-  const resultDiv = document.getElementById("result");
-  const prevHtml = resultDiv.innerHTML;
-  resultDiv.innerHTML = "Loading...";
-  const content = await fetchArticleContent(url);
-  resultDiv.innerHTML = prevHtml;
-  if (!content) {
-    alert("Failed to fetch article content.");
-    return;
-  }
-  const text = formatPlainText(content.title, content.bodyBlocks, content.references);
-  const blob = new Blob([text], { type: "text/plain; charset=utf-8" });
-  downloadBlob(blob, safeFilename(content.title) + ".txt");
-}
-
-/**
- * Download as PDF.
- */
-async function downloadPdf(url) {
-  const resultDiv = document.getElementById("result");
-  const prevHtml = resultDiv.innerHTML;
-  resultDiv.innerHTML = "Loading...";
-  const content = await fetchArticleContent(url);
-  resultDiv.innerHTML = prevHtml;
-  if (!content) {
-    alert("Failed to fetch article content.");
-    return;
-  }
-  const doc = buildPdf(content.title, content.bodyBlocks, content.references);
-  doc.save(safeFilename(content.title) + ".pdf");
-}
-
-/**
  * Main: fetch random article and display.
  */
 async function fetchArticle() {
+  const source = document.querySelector('input[name="source"]:checked')?.value || "wikipedia";
   const category = document.getElementById("categorySelect").value;
   const resultDiv = document.getElementById("result");
 
   resultDiv.innerHTML = "Loading...";
 
-  let url;
+  let url = null;
+  let title = "";
+  let categoryLabel = "";
+  let isCustom = false;
+
   try {
-    url = await getRandomArticle(category);
+    if (source === "my_links") {
+      const links = getUserLinks();
+      if (!links.length) {
+        resultDiv.innerHTML = "Add some links first in the My links section below.";
+        return;
+      }
+      const pick = links[Math.floor(Math.random() * links.length)];
+      url = pick.url;
+      title = pick.title || deriveTitleFromUrl(url);
+      categoryLabel = "My links";
+      isCustom = !isWikipediaUrl(url);
+    } else if (source === "both") {
+      const useWiki = Math.random() < 0.5;
+      const userLinks = getUserLinks();
+      if (useWiki || !userLinks.length) {
+        url = await getRandomArticle(category);
+        if (url) {
+          title = url.split("/wiki/")[1].replace(/_/g, " ");
+          categoryLabel = CATEGORY_LABELS[category] || category;
+        }
+      } else {
+        const pick = userLinks[Math.floor(Math.random() * userLinks.length)];
+        url = pick.url;
+        title = pick.title || deriveTitleFromUrl(url);
+        categoryLabel = "My links";
+        isCustom = !isWikipediaUrl(url);
+      }
+    } else {
+      url = await getRandomArticle(category);
+      if (url) {
+        title = url.split("/wiki/")[1].replace(/_/g, " ");
+        categoryLabel = CATEGORY_LABELS[category] || category;
+        isCustom = false;
+      }
+    }
   } catch (err) {
     console.error("fetchArticle error:", err);
     resultDiv.innerHTML = `Failed to fetch article. Check the browser console (F12) for details. If testing locally, try <code>vercel dev</code> or <code>npx serve public</code> instead of opening the file directly.`;
@@ -528,28 +456,19 @@ async function fetchArticle() {
     return;
   }
 
-  const title = url.split("/wiki/")[1].replace(/_/g, " ");
-  const categoryLabel = CATEGORY_LABELS[category] || category;
-  resultDiv.innerHTML = `
-    <div>Read: <a href="${url}" target="_blank">${escapeHtml(title)}</a></div>
+  const logCategory = source === "my_links" || (source === "both" && categoryLabel === "My links") ? "my_links" : category;
+
+  let html = `
+    <div>Read: <a href="${escapeHtml(url)}" target="_blank">${escapeHtml(title)}</a></div>
     <div class="meta">Category: ${escapeHtml(categoryLabel)}</div>
-    <div class="meta" style="margin-top: 12px;">
-      Download: <span class="download-link" data-url="${escapeHtml(url)}" data-format="txt">Plain text</span> &middot; <span class="download-link" data-url="${escapeHtml(url)}" data-format="pdf">PDF</span>
-    </div>
-    <div class="meta" style="margin-top: 8px;">
-      <span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(category)}">Log article</span>
-    </div>
+    <div class="meta" style="margin-top: 12px;"><span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}">Log article</span></div>
   `;
 
-  resultDiv.querySelectorAll(".download-link").forEach((el) => {
+  resultDiv.innerHTML = html;
+
+  resultDiv.querySelectorAll(".log-article-link").forEach((el) => {
     el.addEventListener("click", () => {
-      if (el.classList.contains("log-article-link")) {
-        logArticle(el.dataset.url, el.dataset.title, el.dataset.category);
-      } else if (el.dataset.format === "txt") {
-        downloadTxt(el.dataset.url);
-      } else {
-        downloadPdf(el.dataset.url);
-      }
+      logArticle(el.dataset.url, el.dataset.title, logCategory);
     });
   });
 }
@@ -606,12 +525,34 @@ async function initAuth() {
       } else {
         readLogCache = [];
       }
+      const linksRes = await apiFetch("/api/user-links");
+      if (linksRes.ok) {
+        const linksData = await linksRes.json();
+        const serverLinks = linksData.links || [];
+        const localLinks = (() => {
+          try {
+            const raw = localStorage.getItem(USER_LINKS_KEY);
+            return raw ? JSON.parse(raw) : [];
+          } catch {
+            return [];
+          }
+        })();
+        if (localLinks.length && !serverLinks.length) {
+          userLinksCache = localLinks;
+          saveUserLinks(localLinks);
+        } else {
+          userLinksCache = serverLinks;
+        }
+      } else {
+        userLinksCache = [];
+      }
     }
   } catch {
     // No backend (e.g. static serve)
   }
   updateAuthUI();
   renderReadLog();
+  renderUserLinks();
 }
 
 function openAuthModal(mode) {
@@ -692,9 +633,17 @@ async function handleAuthSubmit(e) {
       } else {
         readLogCache = [];
       }
+      const linksRes = await apiFetch("/api/user-links");
+      if (linksRes.ok) {
+        const linksData = await linksRes.json();
+        userLinksCache = linksData.links || [];
+      } else {
+        userLinksCache = [];
+      }
       closeAuthModal();
       updateAuthUI();
       renderReadLog();
+      renderUserLinks();
       return;
     }
     if (!res.ok) {
@@ -713,9 +662,17 @@ async function handleAuthSubmit(e) {
     } else {
       readLogCache = [];
     }
+    const linksRes = await apiFetch("/api/user-links");
+    if (linksRes.ok) {
+      const linksData = await linksRes.json();
+      userLinksCache = linksData.links || [];
+    } else {
+      userLinksCache = [];
+    }
     closeAuthModal();
     updateAuthUI();
     renderReadLog();
+    renderUserLinks();
   } catch (err) {
     errorEl.textContent = "Could not connect. Run `vercel dev` or deploy to Vercel.";
     errorEl.style.display = "block";
@@ -732,14 +689,89 @@ async function handleLogout() {
   }
   loggedInUser = null;
   readLogCache = null;
+  userLinksCache = null;
   updateAuthUI();
   renderReadLog();
+  renderUserLinks();
+}
+
+// Custom category dropdown
+function initCategoryDropdown() {
+  const trigger = document.getElementById("categoryTrigger");
+  const panel = document.getElementById("categoryPanel");
+  const hiddenInput = document.getElementById("categorySelect");
+  const labelEl = trigger?.querySelector(".category-trigger-label");
+  if (!trigger || !panel || !hiddenInput || !labelEl) return;
+
+  function close() {
+    panel.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+  }
+
+  function open() {
+    panel.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+  }
+
+  function select(value) {
+    const label = CATEGORY_LABELS[value] || value;
+    hiddenInput.value = value;
+    labelEl.textContent = label;
+    panel.querySelectorAll(".category-option.selected").forEach((el) => el.classList.remove("selected"));
+    const opt = panel.querySelector(`.category-option[data-value="${value}"]`);
+    if (opt) opt.classList.add("selected");
+    close();
+  }
+
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (panel.hidden) open();
+    else close();
+  });
+
+  panel.querySelectorAll(".category-option").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const val = el.dataset.value;
+      if (val) select(val);
+    });
+  });
+
+  document.addEventListener("click", () => close());
+  panel.addEventListener("click", (e) => e.stopPropagation());
 }
 
 // Wire up when DOM ready
 document.addEventListener("DOMContentLoaded", () => {
   window.fetchArticle = fetchArticle;
+  initCategoryDropdown();
   initAuth();
+  function tryAddLink() {
+    const urlInput = document.getElementById("newLinkInput");
+    const displayNameInput = document.getElementById("newLinkDisplayName");
+    const count = addUserLinks(urlInput?.value, displayNameInput?.value);
+    if (count > 0) {
+      if (urlInput) urlInput.value = "";
+      if (displayNameInput) displayNameInput.value = "";
+      return true;
+    }
+    return false;
+  }
+  document.getElementById("addLinkBtn")?.addEventListener("click", () => {
+    if (!tryAddLink()) alert("Please enter at least one valid URL.");
+  });
+  document.getElementById("newLinkInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (!tryAddLink()) alert("Please enter at least one valid URL.");
+    }
+  });
+  document.getElementById("newLinkDisplayName")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (!tryAddLink()) alert("Please enter at least one valid URL.");
+    }
+  });
   document.getElementById("authLoginLink")?.addEventListener("click", (e) => {
     e.preventDefault();
     openAuthModal("login");
