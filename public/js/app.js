@@ -64,7 +64,7 @@ const CATEGORY_LABELS = {
   video_games: "Video games",
   warfare: "Warfare",
   all_good: "All good articles",
-  my_links: "My links"
+  my_links: "Links"
 };
 
 const API_BASE = "https://en.wikipedia.org/w/api.php";
@@ -79,12 +79,14 @@ const ARTICLES_CACHE = {};
 const READ_LOG_KEY = "random_wiki_read_log";
 const USER_LINKS_KEY = "random_wiki_user_links";
 const PRESETS_KEY = "random_wiki_presets";
+const CURRENTLY_READING_KEY = "random_wiki_currently_reading";
 
 // Auth state (set when backend is available and user is logged in)
 let loggedInUser = null;
 let readLogCache = null;
 let userLinksCache = null;
 let presetsCache = null;
+let currentlyReadingCache = null;
 
 const fetchOpts = { credentials: "include" };
 
@@ -156,6 +158,102 @@ function removeFromLog(index) {
   log.splice(index, 1);
   saveReadLog(log);
   renderReadLog();
+}
+
+// --- Currently reading ---
+
+function getCurrentlyReading() {
+  if (loggedInUser !== null && currentlyReadingCache !== null) {
+    return currentlyReadingCache;
+  }
+  try {
+    const raw = localStorage.getItem(CURRENTLY_READING_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCurrentlyReading(items) {
+  if (loggedInUser !== null) {
+    currentlyReadingCache = [...items];
+    apiFetch("/api/currently-reading", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items })
+    }).catch((e) => console.error("Failed to sync currently reading:", e));
+    return;
+  }
+  try {
+    localStorage.setItem(CURRENTLY_READING_KEY, JSON.stringify(items));
+  } catch (e) {
+    console.error("Failed to save currently reading:", e);
+  }
+}
+
+function addToCurrentlyReading(url, title, category) {
+  const items = getCurrentlyReading();
+  if (items.some((e) => e.url === url)) return;
+  const categoryLabel = category ? (CATEGORY_LABELS[category] || category) : "";
+  items.unshift({
+    url,
+    title: title || deriveTitleFromUrl(url),
+    category: categoryLabel,
+    categoryKey: category || "my_links",
+    date: new Date().toISOString(),
+    notes: ""
+  });
+  saveCurrentlyReading(items);
+  renderCurrentlyReading();
+}
+
+function removeFromCurrentlyReading(index) {
+  const items = getCurrentlyReading();
+  items.splice(index, 1);
+  saveCurrentlyReading(items);
+  renderCurrentlyReading();
+}
+
+function renderCurrentlyReading() {
+  const container = document.getElementById("currentlyReadingList");
+  if (!container) return;
+  const items = getCurrentlyReading();
+  if (!items.length) {
+    container.innerHTML =
+      '<p class="currently-reading-empty">Nothing in your reading list. Add articles from Links, the article selector, or the log.</p>';
+    return;
+  }
+  container.innerHTML = items
+    .map(
+      (e, i) => `
+    <div class="currently-reading-entry" data-index="${i}">
+      <div class="entry-main">
+        <span class="entry-title-wrap"><a href="${escapeHtml(e.url)}" target="_blank">${escapeHtml(e.title)}</a></span>
+        <span class="currently-reading-meta">${escapeHtml(e.category || "—")}</span>
+      </div>
+      <span class="currently-reading-actions">
+        <span class="currently-reading-links" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-notes="${escapeHtml(e.notes || "")}">Links</span>
+        <span class="currently-reading-log" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-category-key="${escapeHtml(e.categoryKey || "my_links")}">Log</span>
+        <span class="currently-reading-remove" data-index="${i}">Remove</span>
+      </span>
+    </div>`
+    )
+    .join("");
+  container.querySelectorAll(".currently-reading-links").forEach((el) => {
+    el.addEventListener("click", () => {
+      removeFromCurrentlyReading(Number(el.dataset.index));
+      addUserLink(el.dataset.url, el.dataset.title, el.dataset.notes);
+    });
+  });
+  container.querySelectorAll(".currently-reading-log").forEach((el) => {
+    el.addEventListener("click", () => {
+      removeFromCurrentlyReading(Number(el.dataset.index));
+      logArticle(el.dataset.url, el.dataset.title, el.dataset.categoryKey || "my_links");
+    });
+  });
+  container.querySelectorAll(".currently-reading-remove").forEach((el) => {
+    el.addEventListener("click", () => removeFromCurrentlyReading(Number(el.dataset.index)));
+  });
 }
 
 // --- User links ---
@@ -271,6 +369,19 @@ function removeUserLink(index) {
   renderUserLinks();
 }
 
+function addUserLink(url, title, notes = "") {
+  const links = getUserLinks();
+  if (links.some((l) => l.url === url)) return;
+  links.unshift({
+    url,
+    title: title || deriveTitleFromUrl(url),
+    date: new Date().toISOString(),
+    notes: notes || ""
+  });
+  saveUserLinks(links);
+  renderUserLinks();
+}
+
 // --- Presets ---
 
 function getPresets() {
@@ -368,7 +479,7 @@ function savePresetFromModal() {
   const wikipediaCategories = selected.filter((c) => c !== "my_links");
   const includeMyLinks = selected.includes("my_links");
   if (!wikipediaCategories.length && !includeMyLinks) {
-    alert("Please select at least one source (Wikipedia category or My links) from the dropdown.");
+    alert("Please select at least one source (Wikipedia category or Links) from the dropdown.");
     return;
   }
   const presets = getPresets();
@@ -401,7 +512,8 @@ function renderUserLinks() {
       </div>
       <span class="user-link-actions">
         <span class="user-link-edit" data-index="${i}">Edit</span>
-        <span class="user-link-log" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title || deriveTitleFromUrl(e.url))}">Log</span>
+        <span class="user-link-reading" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title || deriveTitleFromUrl(e.url))}">Reading</span>
+        <span class="user-link-log" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title || deriveTitleFromUrl(e.url))}">Log</span>
         <span class="user-link-remove" data-index="${i}">Remove</span>
       </span>
     </div>`
@@ -439,10 +551,17 @@ function renderUserLinks() {
       });
     });
   });
+  container.querySelectorAll(".user-link-reading").forEach((el) => {
+    el.addEventListener("click", () => {
+      removeUserLink(Number(el.dataset.index));
+      addToCurrentlyReading(el.dataset.url, el.dataset.title, "my_links");
+    });
+  });
   container.querySelectorAll(".user-link-log").forEach((el) => {
-    el.addEventListener("click", () =>
-      logArticle(el.dataset.url, el.dataset.title, "my_links")
-    );
+    el.addEventListener("click", () => {
+      removeUserLink(Number(el.dataset.index));
+      logArticle(el.dataset.url, el.dataset.title, "my_links");
+    });
   });
   container.querySelectorAll(".user-link-remove").forEach((el) => {
     el.addEventListener("click", () => removeUserLink(Number(el.dataset.index)));
@@ -471,6 +590,8 @@ function renderReadLog() {
       </div>
       <span class="read-log-actions">
         <span class="read-log-edit" data-index="${i}">Edit</span>
+        <span class="read-log-reading" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-category-key="${escapeHtml(getCategoryKeyFromLabel(e.category))}">Reading</span>
+        <span class="read-log-links" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-notes="${escapeHtml(e.notes || "")}">Links</span>
         <span class="read-log-remove" data-index="${i}">Remove</span>
       </span>
     </div>`
@@ -506,6 +627,18 @@ function renderReadLog() {
           renderReadLog();
         }
       });
+    });
+  });
+  container.querySelectorAll(".read-log-reading").forEach((el) => {
+    el.addEventListener("click", () => {
+      removeFromLog(Number(el.dataset.index));
+      addToCurrentlyReading(el.dataset.url, el.dataset.title, el.dataset.categoryKey);
+    });
+  });
+  container.querySelectorAll(".read-log-links").forEach((el) => {
+    el.addEventListener("click", () => {
+      removeFromLog(Number(el.dataset.index));
+      addUserLink(el.dataset.url, el.dataset.title, el.dataset.notes);
     });
   });
   container.querySelectorAll(".read-log-remove").forEach((el) => {
@@ -615,6 +748,10 @@ async function getRandomArticle(categoryOrCategories) {
   return "https://en.wikipedia.org" + href;
 }
 
+function getCategoryKeyFromLabel(label) {
+  return Object.keys(CATEGORY_LABELS).find((k) => CATEGORY_LABELS[k] === label) || "my_links";
+}
+
 function getSelectedCategories() {
   const raw = document.getElementById("categorySelect")?.value || "[]";
   try {
@@ -647,11 +784,11 @@ async function fetchArticle() {
     const hasLinks = includeMyLinks && userLinks.length > 0;
 
     if (!hasWiki && !hasLinks) {
-      resultDiv.innerHTML = "Select at least one source (Wikipedia category or My links) from the dropdown.";
+      resultDiv.innerHTML = "Select at least one source (Wikipedia category or Links) from the dropdown.";
       return;
     }
     if (includeMyLinks && !userLinks.length) {
-      resultDiv.innerHTML = "Add some links first in the My links section.";
+      resultDiv.innerHTML = "Add some links first in the Links section.";
       return;
     }
 
@@ -670,7 +807,7 @@ async function fetchArticle() {
       const pick = userLinks[Math.floor(Math.random() * userLinks.length)];
       url = pick.url;
       title = pick.title || deriveTitleFromUrl(url);
-      categoryLabel = "My links";
+      categoryLabel = "Links";
       logCategory = "my_links";
     }
   } catch (err) {
@@ -687,14 +824,19 @@ async function fetchArticle() {
   let html = `
     <div>Read: <a href="${escapeHtml(url)}" target="_blank">${escapeHtml(title)}</a></div>
     <div class="meta">Category: ${escapeHtml(categoryLabel)}</div>
-    <div class="meta" style="margin-top: 12px;"><span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}">Log</span></div>
+    <div class="meta" style="margin-top: 12px;"><span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}">Log</span> &middot; <span class="add-to-currently-reading-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}">Reading</span></div>
   `;
 
   resultDiv.innerHTML = html;
 
   resultDiv.querySelectorAll(".log-article-link").forEach((el) => {
     el.addEventListener("click", () => {
-      logArticle(el.dataset.url, el.dataset.title, logCategory);
+      logArticle(el.dataset.url, el.dataset.title, el.dataset.category);
+    });
+  });
+  resultDiv.querySelectorAll(".add-to-currently-reading-link").forEach((el) => {
+    el.addEventListener("click", () => {
+      addToCurrentlyReading(el.dataset.url, el.dataset.title, el.dataset.category);
     });
   });
 }
@@ -793,6 +935,27 @@ async function initAuth() {
       } else {
         presetsCache = [];
       }
+      const currentlyReadingRes = await apiFetch("/api/currently-reading");
+      if (currentlyReadingRes.ok) {
+        const crData = await currentlyReadingRes.json();
+        const serverCR = crData.items || [];
+        const localCR = (() => {
+          try {
+            const raw = localStorage.getItem(CURRENTLY_READING_KEY);
+            return raw ? JSON.parse(raw) : [];
+          } catch {
+            return [];
+          }
+        })();
+        if (localCR.length && !serverCR.length) {
+          currentlyReadingCache = localCR;
+          saveCurrentlyReading(localCR);
+        } else {
+          currentlyReadingCache = serverCR;
+        }
+      } else {
+        currentlyReadingCache = [];
+      }
     }
   } catch {
     // No backend (e.g. static serve)
@@ -801,6 +964,7 @@ async function initAuth() {
   renderReadLog();
   renderUserLinks();
   renderPresets();
+  renderCurrentlyReading();
 }
 
 function openAuthModal(mode) {
@@ -895,11 +1059,19 @@ async function handleAuthSubmit(e) {
       } else {
         presetsCache = [];
       }
+      const currentlyReadingRes = await apiFetch("/api/currently-reading");
+      if (currentlyReadingRes.ok) {
+        const crData = await currentlyReadingRes.json();
+        currentlyReadingCache = crData.items || [];
+      } else {
+        currentlyReadingCache = [];
+      }
       closeAuthModal();
       updateAuthUI();
       renderReadLog();
       renderUserLinks();
       renderPresets();
+      renderCurrentlyReading();
       return;
     }
     if (!res.ok) {
@@ -932,11 +1104,19 @@ async function handleAuthSubmit(e) {
     } else {
       presetsCache = [];
     }
+    const currentlyReadingRes = await apiFetch("/api/currently-reading");
+    if (currentlyReadingRes.ok) {
+      const crData = await currentlyReadingRes.json();
+      currentlyReadingCache = crData.items || [];
+    } else {
+      currentlyReadingCache = [];
+    }
     closeAuthModal();
     updateAuthUI();
     renderReadLog();
     renderUserLinks();
     renderPresets();
+    renderCurrentlyReading();
   } catch (err) {
     errorEl.textContent = "Could not connect. Run `vercel dev` or deploy to Vercel.";
     errorEl.style.display = "block";
@@ -955,10 +1135,12 @@ async function handleLogout() {
   readLogCache = null;
   userLinksCache = null;
   presetsCache = null;
+  currentlyReadingCache = null;
   updateAuthUI();
   renderReadLog();
   renderUserLinks();
   renderPresets();
+  renderCurrentlyReading();
 }
 
 function updateCategoryLabel() {

@@ -94,3 +94,15 @@ def save_presets(username: str, presets: list):
     if not isinstance(presets, list):
         return
     get_storage().save_presets(username, presets)
+
+
+def get_currently_reading(username: str) -> list:
+    """Get user's currently reading list."""
+    return get_storage().get_currently_reading(username)
+
+
+def save_currently_reading(username: str, items: list):
+    """Save user's currently reading list."""
+    if not isinstance(items, list):
+        return
+    get_storage().save_currently_reading(username, items)
