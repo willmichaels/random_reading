@@ -69,6 +69,16 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
+    def get_link_lists(self, username: str) -> list:
+        """Get user's link lists [{id, name, urls}...]."""
+        pass
+
+    @abstractmethod
+    def save_link_lists(self, username: str, link_lists: list) -> None:
+        """Save user's link lists."""
+        pass
+
+    @abstractmethod
     def get_presets(self, username: str) -> list:
         """Get user's presets."""
         pass
@@ -99,6 +109,7 @@ class JsonStorage(StorageBackend):
         self._sessions_file = self._data_dir / "sessions.json"
         self._logs_dir = self._data_dir / "logs"
         self._links_dir = self._data_dir / "links"
+        self._link_lists_dir = self._data_dir / "link_lists"
         self._presets_dir = self._data_dir / "presets"
         self._currently_reading_dir = self._data_dir / "currently_reading"
         self._ensure_dirs()
@@ -107,6 +118,7 @@ class JsonStorage(StorageBackend):
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._logs_dir.mkdir(parents=True, exist_ok=True)
         self._links_dir.mkdir(parents=True, exist_ok=True)
+        self._link_lists_dir.mkdir(parents=True, exist_ok=True)
         self._presets_dir.mkdir(parents=True, exist_ok=True)
         self._currently_reading_dir.mkdir(parents=True, exist_ok=True)
 
@@ -174,6 +186,17 @@ class JsonStorage(StorageBackend):
             return
         links_path = self._links_dir / f"{username}.json"
         self._save_json(links_path, links)
+
+    def get_link_lists(self, username: str) -> list:
+        path = self._link_lists_dir / f"{username}.json"
+        data = self._load_json(path, [])
+        return data if isinstance(data, list) else []
+
+    def save_link_lists(self, username: str, link_lists: list) -> None:
+        if not isinstance(link_lists, list):
+            return
+        path = self._link_lists_dir / f"{username}.json"
+        self._save_json(path, link_lists)
 
     def get_presets(self, username: str) -> list:
         presets_path = self._presets_dir / f"{username}.json"
@@ -265,6 +288,23 @@ class RedisUrlStorage(StorageBackend):
             return
         key = f"wiki:links:{username}"
         self._redis.set(key, json.dumps(links))
+
+    def get_link_lists(self, username: str) -> list:
+        key = f"wiki:link_lists:{username}"
+        val = self._redis.get(key)
+        if not val:
+            return []
+        try:
+            data = json.loads(val)
+            return data if isinstance(data, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def save_link_lists(self, username: str, link_lists: list) -> None:
+        if not isinstance(link_lists, list):
+            return
+        key = f"wiki:link_lists:{username}"
+        self._redis.set(key, json.dumps(link_lists))
 
     def get_presets(self, username: str) -> list:
         key = f"wiki:presets:{username}"
@@ -391,6 +431,23 @@ class RedisStorage(StorageBackend):
             return
         key = f"wiki:links:{username}"
         self._redis.set(key, json.dumps(links))
+
+    def get_link_lists(self, username: str) -> list:
+        key = f"wiki:link_lists:{username}"
+        val = self._redis.get(key)
+        if not val:
+            return []
+        try:
+            data = json.loads(val)
+            return data if isinstance(data, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def save_link_lists(self, username: str, link_lists: list) -> None:
+        if not isinstance(link_lists, list):
+            return
+        key = f"wiki:link_lists:{username}"
+        self._redis.set(key, json.dumps(link_lists))
 
     def get_presets(self, username: str) -> list:
         key = f"wiki:presets:{username}"

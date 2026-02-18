@@ -78,6 +78,7 @@ const ARTICLES_CACHE = {};
 
 const READ_LOG_KEY = "random_wiki_read_log";
 const USER_LINKS_KEY = "random_wiki_user_links";
+const LINK_LISTS_KEY = "random_wiki_link_lists";
 const PRESETS_KEY = "random_wiki_presets";
 const CURRENTLY_READING_KEY = "random_wiki_currently_reading";
 
@@ -85,6 +86,7 @@ const CURRENTLY_READING_KEY = "random_wiki_currently_reading";
 let loggedInUser = null;
 let readLogCache = null;
 let userLinksCache = null;
+let linkListsCache = null;
 let presetsCache = null;
 let currentlyReadingCache = null;
 
@@ -322,7 +324,7 @@ function saveUserLinks(links) {
   }
 }
 
-function addUserLinks(urlInput, displayNameInput) {
+function addUserLinks(urlInput, displayNameInput, listIds = []) {
   const urlStrings = (urlInput || "")
     .split(",")
     .map((s) => s.trim())
@@ -343,7 +345,13 @@ function addUserLinks(urlInput, displayNameInput) {
   if (!added.length) return 0;
   links.push(...added);
   saveUserLinks(links);
+  for (const a of added) {
+    for (const listId of listIds) {
+      addUrlToList(listId, a.url);
+    }
+  }
   renderUserLinks();
+  renderAddLinkLists();
   return added.length;
 }
 
@@ -392,6 +400,94 @@ function addUserLink(url, title, notes = "") {
   renderUserLinks();
 }
 
+// --- Link lists ---
+
+function getLinkLists() {
+  if (loggedInUser !== null && linkListsCache !== null) {
+    return linkListsCache;
+  }
+  try {
+    const raw = localStorage.getItem(LINK_LISTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLinkLists(linkLists) {
+  if (loggedInUser !== null) {
+    linkListsCache = [...linkLists];
+    apiFetch("/api/link-lists", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ linkLists })
+    }).catch((e) => console.error("Failed to sync link lists:", e));
+    return;
+  }
+  try {
+    localStorage.setItem(LINK_LISTS_KEY, JSON.stringify(linkLists));
+  } catch (e) {
+    console.error("Failed to save link lists:", e);
+  }
+}
+
+function createLinkListId() {
+  return "list_" + Math.random().toString(36).slice(2, 11);
+}
+
+function addLinkList(name) {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return null;
+  const lists = getLinkLists();
+  const list = { id: createLinkListId(), name: trimmed, urls: [] };
+  lists.push(list);
+  saveLinkLists(lists);
+  return list.id;
+}
+
+function updateLinkList(listId, name) {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return;
+  const lists = getLinkLists();
+  const idx = lists.findIndex((l) => l.id === listId);
+  if (idx < 0) return;
+  lists[idx] = { ...lists[idx], name: trimmed };
+  saveLinkLists(lists);
+}
+
+function deleteLinkList(listId) {
+  const lists = getLinkLists().filter((l) => l.id !== listId);
+  saveLinkLists(lists);
+}
+
+function addUrlToList(listId, url) {
+  const lists = getLinkLists();
+  const list = lists.find((l) => l.id === listId);
+  if (!list || list.urls.includes(url)) return;
+  list.urls = [...list.urls, url];
+  saveLinkLists(lists);
+}
+
+function removeUrlFromList(listId, url) {
+  const lists = getLinkLists();
+  const list = lists.find((l) => l.id === listId);
+  if (!list) return;
+  list.urls = list.urls.filter((u) => u !== url);
+  saveLinkLists(lists);
+}
+
+function toggleUrlInList(listId, url) {
+  const lists = getLinkLists();
+  const list = lists.find((l) => l.id === listId);
+  if (!list) return;
+  if (list.urls.includes(url)) {
+    list.urls = list.urls.filter((u) => u !== url);
+  } else {
+    list.urls = [...list.urls, url];
+  }
+  saveLinkLists(lists);
+}
+
 // --- Presets ---
 
 function getPresets() {
@@ -427,8 +523,13 @@ function applyPreset(preset, andFetch = false) {
   const hiddenInput = document.getElementById("categorySelect");
   if (!hiddenInput) return;
   const categories = preset.wikipediaCategories || [];
-  const sources = preset.includeMyLinks ? [...categories, "my_links"] : categories;
+  let sources = preset.includeMyLinks ? [...categories, "my_links"] : categories;
+  const linkListIds = preset.linkListIds || [];
+  for (const id of linkListIds) {
+    sources.push("linklist:" + id);
+  }
   hiddenInput.value = JSON.stringify(sources.length ? sources : ["vital_technology"]);
+  renderCategoryPanelLinkLists();
   syncCategoryPanelFromValue();
   updateCategoryLabel();
   if (andFetch) fetchArticle();
@@ -486,49 +587,161 @@ function savePresetFromModal() {
     return;
   }
   const selected = getSelectedCategories();
-  const wikipediaCategories = selected.filter((c) => c !== "my_links");
+  const wikipediaCategories = selected.filter((c) => c !== "my_links" && !c.startsWith("linklist:"));
   const includeMyLinks = selected.includes("my_links");
-  if (!wikipediaCategories.length && !includeMyLinks) {
-    alert("Please select at least one source (Wikipedia category or Links) from the dropdown.");
+  const linkListIds = selected.filter((c) => c.startsWith("linklist:")).map((c) => c.slice(9));
+  if (!wikipediaCategories.length && !includeMyLinks && !linkListIds.length) {
+    alert("Please select at least one source (Wikipedia category, Links, or a link list) from the dropdown.");
     return;
   }
   const presets = getPresets();
   presets.push({
     name,
     wikipediaCategories,
-    includeMyLinks
+    includeMyLinks,
+    linkListIds: linkListIds.length ? linkListIds : undefined
   });
   savePresets(presets);
   renderPresets();
   closePresetModal();
 }
 
+function renderAddLinkLists() {
+  const container = document.getElementById("addLinkListsContainer");
+  if (!container) return;
+  const lists = getLinkLists();
+  if (!lists.length) {
+    container.innerHTML = "";
+    return;
+  }
+  container.innerHTML =
+    '<span class="add-link-lists-label">Add to lists:</span> ' +
+    lists
+      .map(
+        (l) =>
+          `<label><input type="checkbox" class="add-link-list-check" data-list-id="${escapeHtml(l.id)}"> ${escapeHtml(l.name)}</label>`
+      )
+      .join("");
+}
+
+function getSelectedAddLinkListIds() {
+  return Array.from(document.querySelectorAll(".add-link-list-check:checked")).map(
+    (el) => el.dataset.listId
+  );
+}
+
+function renderLinkEntry(link, index) {
+  return `
+    <div class="user-link-entry" data-index="${index}" data-url="${escapeHtml(link.url)}">
+      <div class="entry-main">
+        <span class="entry-title-wrap"><a href="${escapeHtml(link.url)}" target="_blank">${escapeHtml(link.title || link.url)}</a></span>
+        <span class="user-link-meta">${escapeHtml(link.date ? formatLogDate(link.date) : "—")}</span>
+        <input type="text" class="entry-note" data-index="${index}" placeholder="Add note..." value="${escapeHtml(link.notes || "")}" />
+      </div>
+      <span class="user-link-actions">
+        <span class="user-link-edit" data-index="${index}">Edit</span>
+        <span class="user-link-add-to-list" data-url="${escapeHtml(link.url)}">
+          <span class="user-link-add-to-list-trigger">Lists</span>
+          <div class="user-link-add-to-list-panel"></div>
+        </span>
+        <span class="user-link-reading" data-index="${index}" data-url="${escapeHtml(link.url)}" data-title="${escapeHtml(link.title || deriveTitleFromUrl(link.url))}">Reading</span>
+        <span class="user-link-log" data-index="${index}" data-url="${escapeHtml(link.url)}" data-title="${escapeHtml(link.title || deriveTitleFromUrl(link.url))}">Log</span>
+        <span class="user-link-remove" data-index="${index}">Remove</span>
+      </span>
+    </div>`;
+}
+
 function renderUserLinks() {
   const container = document.getElementById("userLinksList");
   if (!container) return;
   const links = getUserLinks();
+  const linkLists = getLinkLists();
+
   if (!links.length) {
     container.innerHTML = '<p class="my-links-empty">No links yet. Add a URL above.</p>';
+    renderAddLinkLists();
     return;
   }
-  container.innerHTML = links
-    .map(
-      (e, i) => `
-    <div class="user-link-entry" data-index="${i}">
-      <div class="entry-main">
-        <span class="entry-title-wrap"><a href="${escapeHtml(e.url)}" target="_blank">${escapeHtml(e.title || e.url)}</a></span>
-        <span class="user-link-meta">${escapeHtml(e.date ? formatLogDate(e.date) : "—")}</span>
-        <input type="text" class="entry-note" data-index="${i}" placeholder="Add note..." value="${escapeHtml(e.notes || "")}" />
+
+  const urlToIndex = new Map();
+  links.forEach((l, i) => urlToIndex.set(l.url, i));
+
+  const urlsInAnyList = new Set();
+  linkLists.forEach((list) => list.urls.forEach((u) => urlsInAnyList.add(u)));
+
+  let html = "";
+
+  if (linkLists.length === 0) {
+    html = `<div class="link-list-section open">
+      <div class="link-list-header">
+        <span>All links</span>
+        <span class="link-list-chevron">&#9662;</span>
       </div>
-      <span class="user-link-actions">
-        <span class="user-link-edit" data-index="${i}">Edit</span>
-        <span class="user-link-reading" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title || deriveTitleFromUrl(e.url))}">Reading</span>
-        <span class="user-link-log" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title || deriveTitleFromUrl(e.url))}">Log</span>
-        <span class="user-link-remove" data-index="${i}">Remove</span>
-      </span>
-    </div>`
-    )
-    .join("");
+      <div class="link-list-content">${links.map((e, i) => renderLinkEntry(e, i)).join("")}</div>
+    </div>`;
+  } else {
+    for (const list of linkLists) {
+      const listLinks = links.filter((l) => list.urls.includes(l.url));
+      if (listLinks.length === 0) continue;
+      html += `<div class="link-list-section open" data-list-id="${escapeHtml(list.id)}">
+        <div class="link-list-header">
+          <span class="link-list-name">${escapeHtml(list.name)}</span>
+          <span class="link-list-actions">
+            <span class="link-list-rename" data-list-id="${escapeHtml(list.id)}" data-name="${escapeHtml(list.name)}">Rename</span>
+            <span class="link-list-delete" data-list-id="${escapeHtml(list.id)}">Delete</span>
+          </span>
+          <span class="link-list-chevron">&#9662;</span>
+        </div>
+        <div class="link-list-content">${listLinks.map((e) => renderLinkEntry(e, urlToIndex.get(e.url))).join("")}</div>
+      </div>`;
+    }
+    const unlistedLinks = links.filter((l) => !urlsInAnyList.has(l.url));
+    if (unlistedLinks.length > 0) {
+      html += `<div class="link-list-section open" data-list-id="unlisted">
+        <div class="link-list-header">
+          <span>Unlisted</span>
+          <span class="link-list-chevron">&#9662;</span>
+        </div>
+        <div class="link-list-content">${unlistedLinks.map((e) => renderLinkEntry(e, urlToIndex.get(e.url))).join("")}</div>
+      </div>`;
+    }
+  }
+
+  container.innerHTML = html;
+
+  container.querySelectorAll(".link-list-header").forEach((h) => {
+    h.addEventListener("click", (e) => {
+      if (e.target.closest(".link-list-rename") || e.target.closest(".link-list-delete")) return;
+      const section = h.closest(".link-list-section");
+      section?.classList.toggle("open");
+    });
+  });
+  container.querySelectorAll(".link-list-rename").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const listId = el.dataset.listId;
+      const current = el.dataset.name || "";
+      const name = prompt("List name:", current);
+      if (name != null && name.trim()) {
+        updateLinkList(listId, name.trim());
+        renderUserLinks();
+        renderCategoryPanelLinkLists();
+        renderPresets();
+      }
+    });
+  });
+  container.querySelectorAll(".link-list-delete").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (confirm("Delete this list? Links will remain in your collection.")) {
+        deleteLinkList(el.dataset.listId);
+        renderUserLinks();
+        renderCategoryPanelLinkLists();
+        renderPresets();
+      }
+    });
+  });
+
   container.querySelectorAll(".user-link-edit").forEach((el) => {
     el.addEventListener("click", () => {
       const entry = el.closest(".user-link-entry");
@@ -536,7 +749,8 @@ function renderUserLinks() {
       const wrap = entry?.querySelector(".entry-title-wrap");
       const link = wrap?.querySelector("a");
       if (!wrap || !link || index < 0) return;
-      const currentTitle = (getUserLinks()[index]?.title || getUserLinks()[index]?.url || "").trim();
+      const linksArr = getUserLinks();
+      const currentTitle = (linksArr[index]?.title || linksArr[index]?.url || "").trim();
       const input = document.createElement("input");
       input.type = "text";
       input.className = "entry-title-edit";
@@ -561,15 +775,45 @@ function renderUserLinks() {
       });
     });
   });
+
+  container.querySelectorAll(".user-link-add-to-list").forEach((addEl) => {
+    const url = addEl.dataset.url;
+    const trigger = addEl.querySelector(".user-link-add-to-list-trigger");
+    const panel = addEl.querySelector(".user-link-add-to-list-panel");
+    const lists = getLinkLists();
+    panel.innerHTML = lists
+      .map((l) => {
+        const inList = l.urls.includes(url);
+        return `<label><input type="checkbox" ${inList ? "checked" : ""} data-list-id="${escapeHtml(l.id)}"> ${escapeHtml(l.name)}</label>`;
+      })
+      .join("");
+    trigger.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      addEl.classList.toggle("open");
+    });
+    panel.addEventListener("click", (e) => e.stopPropagation());
+    panel.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        toggleUrlInList(cb.dataset.listId, url);
+        renderUserLinks();
+        renderCategoryPanelLinkLists();
+      });
+    });
+  });
+  container.querySelectorAll(".user-link-add-to-list").forEach((el) => el.addEventListener("click", (e) => e.stopPropagation()));
+
   container.querySelectorAll(".user-link-reading").forEach((el) => {
     el.addEventListener("click", () => {
-      removeUserLink(Number(el.dataset.index));
+      const index = Number(el.dataset.index);
+      removeUserLink(index);
       addToCurrentlyReading(el.dataset.url, el.dataset.title, "my_links");
     });
   });
   container.querySelectorAll(".user-link-log").forEach((el) => {
     el.addEventListener("click", () => {
-      removeUserLink(Number(el.dataset.index));
+      const index = Number(el.dataset.index);
+      removeUserLink(index);
       logArticle(el.dataset.url, el.dataset.title, "my_links");
     });
   });
@@ -579,6 +823,8 @@ function renderUserLinks() {
   container.querySelectorAll(".user-link-entry .entry-note").forEach((el) => {
     el.addEventListener("blur", () => updateUserLinkNote(Number(el.dataset.index), el.value));
   });
+
+  renderAddLinkLists();
 }
 
 function renderReadLog() {
@@ -777,8 +1023,9 @@ function getSelectedCategories() {
  */
 async function fetchArticle() {
   const selected = getSelectedCategories();
-  const wikiCategories = selected.filter((c) => c !== "my_links");
+  const wikiCategories = selected.filter((c) => c !== "my_links" && !c.startsWith("linklist:"));
   const includeMyLinks = selected.includes("my_links");
+  const selectedListIds = selected.filter((c) => c.startsWith("linklist:")).map((c) => c.slice(9));
   const resultDiv = document.getElementById("result");
 
   resultDiv.innerHTML = "Loading...";
@@ -791,15 +1038,29 @@ async function fetchArticle() {
 
   try {
     const userLinks = getUserLinks();
+    const linkLists = getLinkLists();
+    const urlToLink = new Map(userLinks.map((l) => [l.url, l]));
+
+    let linkPool = [];
+    if (includeMyLinks) linkPool.push(...userLinks);
+    for (const listId of selectedListIds) {
+      const list = linkLists.find((l) => l.id === listId);
+      if (!list) continue;
+      for (const u of list.urls) {
+        const link = urlToLink.get(u);
+        if (link && !linkPool.some((l) => l.url === u)) linkPool.push(link);
+      }
+    }
+
     const hasWiki = wikiCategories.length > 0;
-    const hasLinks = includeMyLinks && userLinks.length > 0;
+    const hasLinks = linkPool.length > 0;
 
     if (!hasWiki && !hasLinks) {
-      resultDiv.innerHTML = "Select at least one source (Wikipedia category or Links) from the dropdown.";
+      resultDiv.innerHTML = "Select at least one source (Wikipedia category, Links, or a link list) from the dropdown. Ensure your link list(s) have links.";
       return;
     }
-    if (includeMyLinks && !userLinks.length) {
-      resultDiv.innerHTML = "Add some links first in the Links section.";
+    if ((includeMyLinks || selectedListIds.length) && !linkPool.length) {
+      resultDiv.innerHTML = "Add some links to your Links section (and to the selected list(s) if using link lists).";
       return;
     }
 
@@ -815,7 +1076,7 @@ async function fetchArticle() {
         logCategory = cat;
       }
     } else {
-      const pick = userLinks[Math.floor(Math.random() * userLinks.length)];
+      const pick = linkPool[Math.floor(Math.random() * linkPool.length)];
       url = pick.url;
       title = pick.title || deriveTitleFromUrl(url);
       categoryLabel = "Links";
@@ -931,6 +1192,27 @@ async function initAuth() {
         }
       } else {
         userLinksCache = [];
+      }
+      const linkListsRes = await apiFetch("/api/link-lists");
+      if (linkListsRes.ok) {
+        const linkListsData = await linkListsRes.json();
+        const serverLists = linkListsData.linkLists || [];
+        const localLists = (() => {
+          try {
+            const raw = localStorage.getItem(LINK_LISTS_KEY);
+            return raw ? JSON.parse(raw) : [];
+          } catch {
+            return [];
+          }
+        })();
+        if (localLists.length && !serverLists.length) {
+          linkListsCache = localLists;
+          saveLinkLists(localLists);
+        } else {
+          linkListsCache = serverLists;
+        }
+      } else {
+        linkListsCache = [];
       }
       const presetsRes = await apiFetch("/api/presets");
       if (presetsRes.ok) {
@@ -1070,6 +1352,13 @@ async function handleAuthSubmit(e) {
       } else {
         userLinksCache = [];
       }
+      const linkListsRes = await apiFetch("/api/link-lists");
+      if (linkListsRes.ok) {
+        const linkListsData = await linkListsRes.json();
+        linkListsCache = linkListsData.linkLists || [];
+      } else {
+        linkListsCache = [];
+      }
       const presetsRes = await apiFetch("/api/presets");
       if (presetsRes.ok) {
         const presetsData = await presetsRes.json();
@@ -1115,6 +1404,13 @@ async function handleAuthSubmit(e) {
     } else {
       userLinksCache = [];
     }
+    const linkListsRes = await apiFetch("/api/link-lists");
+    if (linkListsRes.ok) {
+      const linkListsData = await linkListsRes.json();
+      linkListsCache = linkListsData.linkLists || [];
+    } else {
+      linkListsCache = [];
+    }
     const presetsRes = await apiFetch("/api/presets");
     if (presetsRes.ok) {
       const presetsData = await presetsRes.json();
@@ -1152,6 +1448,7 @@ async function handleLogout() {
   loggedInUser = null;
   readLogCache = null;
   userLinksCache = null;
+  linkListsCache = null;
   presetsCache = null;
   currentlyReadingCache = null;
   updateAuthUI();
@@ -1159,6 +1456,15 @@ async function handleLogout() {
   renderUserLinks();
   renderPresets();
   renderCurrentlyReading();
+}
+
+function getListNameForCategoryValue(val) {
+  if (val && val.startsWith("linklist:")) {
+    const id = val.slice(9);
+    const list = getLinkLists().find((l) => l.id === id);
+    return list ? list.name : val;
+  }
+  return CATEGORY_LABELS[val] || val;
 }
 
 function updateCategoryLabel() {
@@ -1169,10 +1475,29 @@ function updateCategoryLabel() {
   if (selected.length === 0) {
     labelEl.textContent = "Select sources...";
   } else if (selected.length === 1) {
-    labelEl.textContent = CATEGORY_LABELS[selected[0]] || selected[0];
+    labelEl.textContent = getListNameForCategoryValue(selected[0]);
   } else {
     labelEl.textContent = `${selected.length} sources`;
   }
+}
+
+function renderCategoryPanelLinkLists() {
+  const container = document.getElementById("categoryPanelLinkLists");
+  const labelEl = document.getElementById("linkListsGroupLabel");
+  if (!container || !labelEl) return;
+  const lists = getLinkLists();
+  if (!lists.length) {
+    labelEl.style.display = "none";
+    container.innerHTML = "";
+    return;
+  }
+  labelEl.style.display = "block";
+  container.innerHTML = lists
+    .map(
+      (l) =>
+        `<label class="category-option" data-value="linklist:${escapeHtml(l.id)}" role="option"><input type="checkbox"> ${escapeHtml(l.name)}</label>`
+    )
+    .join("");
 }
 
 function syncCategoryPanelFromValue() {
@@ -1223,6 +1548,7 @@ function initCategoryDropdown() {
   trigger.addEventListener("click", (e) => {
     e.stopPropagation();
     if (panel.hidden) {
+      renderCategoryPanelLinkLists();
       syncCategoryPanelFromValue();
       open();
     } else {
@@ -1231,15 +1557,15 @@ function initCategoryDropdown() {
     }
   });
 
-  panel.querySelectorAll(".category-option").forEach((el) => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const checkbox = el.querySelector('input[type="checkbox"]');
-      if (checkbox) {
-        checkbox.checked = !checkbox.checked;
-        el.classList.toggle("selected", checkbox.checked);
-      }
-    });
+  panel.addEventListener("click", (e) => {
+    const opt = e.target.closest(".category-option");
+    if (!opt) return;
+    e.stopPropagation();
+    const checkbox = opt.querySelector('input[type="checkbox"]');
+    if (checkbox) {
+      checkbox.checked = !checkbox.checked;
+      opt.classList.toggle("selected", checkbox.checked);
+    }
   });
 
   if (doneBtn) {
@@ -1261,6 +1587,11 @@ function initCategoryDropdown() {
   updateCategoryLabel();
 }
 
+// Close "Add to list" dropdown when clicking outside
+document.addEventListener("click", () => {
+  document.querySelectorAll(".user-link-add-to-list.open").forEach((el) => el.classList.remove("open"));
+});
+
 // Wire up when DOM ready
 document.addEventListener("DOMContentLoaded", () => {
   window.fetchArticle = fetchArticle;
@@ -1269,14 +1600,28 @@ document.addEventListener("DOMContentLoaded", () => {
   function tryAddLink() {
     const urlInput = document.getElementById("newLinkInput");
     const displayNameInput = document.getElementById("newLinkDisplayName");
-    const count = addUserLinks(urlInput?.value, displayNameInput?.value);
+    const listIds = getSelectedAddLinkListIds();
+    const count = addUserLinks(urlInput?.value, displayNameInput?.value, listIds);
     if (count > 0) {
       if (urlInput) urlInput.value = "";
       if (displayNameInput) displayNameInput.value = "";
+      document.querySelectorAll(".add-link-list-check:checked").forEach((cb) => { cb.checked = false; });
       return true;
     }
     return false;
   }
+  document.getElementById("addListBtn")?.addEventListener("click", () => {
+    const input = document.getElementById("newListInput");
+    const name = input?.value?.trim();
+    if (!name) {
+      alert("Please enter a list name.");
+      return;
+    }
+    addLinkList(name);
+    if (input) input.value = "";
+    renderUserLinks();
+    renderCategoryPanelLinkLists();
+  });
   document.getElementById("addLinkBtn")?.addEventListener("click", () => {
     if (!tryAddLink()) alert("Please enter at least one valid URL.");
   });

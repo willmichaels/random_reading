@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from auth import (
     SESSION_COOKIE,
     get_currently_reading,
+    get_link_lists,
     get_log,
     get_presets,
     get_user_links,
@@ -18,6 +19,7 @@ from auth import (
     logout as auth_logout,
     register as auth_register,
     save_currently_reading,
+    save_link_lists,
     save_log,
     save_presets,
     save_user_links,
@@ -152,6 +154,30 @@ async def api_save_user_links(request: Request):
     if not isinstance(links, list):
         return JSONResponse({"error": "Invalid links"}, status_code=400)
     save_user_links(username, links)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/link-lists")
+async def api_get_link_lists(request: Request):
+    session_id = request.cookies.get(SESSION_COOKIE)
+    username = verify_session(session_id)
+    if not username:
+        return JSONResponse({"error": "Not logged in"}, status_code=401)
+    link_lists = get_link_lists(username)
+    return JSONResponse({"linkLists": link_lists})
+
+
+@app.post("/api/link-lists")
+async def api_save_link_lists(request: Request):
+    session_id = request.cookies.get(SESSION_COOKIE)
+    username = verify_session(session_id)
+    if not username:
+        return JSONResponse({"error": "Not logged in"}, status_code=401)
+    body = await request.json()
+    link_lists = body.get("linkLists", [])
+    if not isinstance(link_lists, list):
+        return JSONResponse({"error": "Invalid link lists"}, status_code=400)
+    save_link_lists(username, link_lists)
     return JSONResponse({"ok": True})
 
 

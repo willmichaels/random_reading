@@ -68,8 +68,8 @@
         .read-log-meta, .user-link-meta, .currently-reading-meta { display: block; color: #6b6b6b; font-size: 13px; margin-top: 4px; }
         .read-log-remove, .user-link-remove, .user-link-log, .user-link-edit, .read-log-edit, .user-link-reading, .read-log-reading, .user-link-links, .read-log-links, .currently-reading-links, .currently-reading-remove, .currently-reading-log { font-size: 13px; color: #2c6ee8; cursor: pointer; }
         .read-log-remove:hover, .user-link-remove:hover, .user-link-log:hover, .user-link-edit:hover, .read-log-edit:hover, .user-link-reading:hover, .read-log-reading:hover, .user-link-links:hover, .read-log-links:hover, .currently-reading-links:hover, .currently-reading-remove:hover, .currently-reading-log:hover { text-decoration: underline; }
-        .user-link-actions { display: flex; gap: 12px; margin-left: 8px; }
-        .read-log-actions, .currently-reading-actions { display: flex; gap: 12px; margin-left: 8px; }
+        .user-link-actions { display: flex; align-items: baseline; gap: 12px; margin-left: 8px; }
+        .read-log-actions, .currently-reading-actions { display: flex; align-items: baseline; gap: 12px; margin-left: 8px; }
         .user-link-entry { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
         .user-link-entry .entry-main { flex: 1; min-width: 0; }
         .entry-note { margin-top: 8px; width: 100%; padding: 6px 0; font-size: 13px; color: #1a1a1a; border: none; border-bottom: 1px solid #e8e8e8; background: transparent; font-family: inherit; }
@@ -83,6 +83,40 @@
         .add-link-row input { flex: 1; padding: 10px 0; font-size: 14px; border: none; border-bottom: 1px solid #e8e8e8; background: transparent; font-family: inherit; }
         .add-link-row input:focus { outline: none; border-bottom-color: #1a1a1a; }
         .add-link-row input::placeholder { color: #8e8e8e; }
+
+        /* New list row */
+        .new-list-row { display: flex; gap: 10px; margin-bottom: 12px; }
+        .new-list-row input { flex: 1; padding: 10px 0; font-size: 14px; border: none; border-bottom: 1px solid #e8e8e8; background: transparent; font-family: inherit; }
+        .new-list-row input:focus { outline: none; border-bottom-color: #1a1a1a; }
+        .new-list-row input::placeholder { color: #8e8e8e; }
+
+        /* Add to lists when adding link */
+        .add-link-lists { margin-bottom: 12px; font-size: 13px; color: #6b6b6b; }
+        .add-link-lists label { display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; cursor: pointer; }
+
+        /* Collapsible link list sections */
+        .link-list-section { margin-bottom: 12px; border: 1px solid #e8e8e8; border-radius: 8px; overflow: hidden; }
+        .link-list-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: #fafafa; cursor: pointer; font-weight: 500; font-size: 14px; }
+        .link-list-header:hover { background: #f0f0f0; }
+        .link-list-header .link-list-chevron { opacity: 0.6; font-size: 11px; transition: transform 0.2s; }
+        .link-list-section.open .link-list-chevron { transform: rotate(-90deg); }
+        .link-list-section:not(.open) .link-list-content { display: none; }
+        .link-list-header .link-list-actions { display: flex; gap: 8px; margin-left: 8px; }
+        .link-list-header .link-list-rename, .link-list-header .link-list-delete { font-size: 12px; color: #2c6ee8; cursor: pointer; }
+        .link-list-header .link-list-rename:hover, .link-list-header .link-list-delete:hover { text-decoration: underline; }
+        .link-list-header .link-list-delete { color: #8e8e8e; }
+        .link-list-header .link-list-delete:hover { color: #c00; }
+        .link-list-content { padding: 8px 12px 12px; }
+        .link-list-content .user-link-entry { margin-bottom: 12px; }
+        .link-list-content .user-link-entry:last-child { margin-bottom: 0; }
+
+        /* Add to list dropdown on link entry */
+        .user-link-add-to-list { position: relative; display: inline-block; }
+        .user-link-add-to-list .user-link-add-to-list-trigger { font-size: 13px; color: #2c6ee8; cursor: pointer; }
+        .user-link-add-to-list .user-link-add-to-list-trigger:hover { text-decoration: underline; }
+        .user-link-add-to-list .user-link-add-to-list-panel { display: none; position: absolute; top: 100%; left: 0; margin-top: 4px; min-width: 160px; padding: 8px; background: #fafafa; border: 1px solid #e8e8e8; border-radius: 6px; z-index: 20; }
+        .user-link-add-to-list.open .user-link-add-to-list-panel { display: block; }
+        .user-link-add-to-list .user-link-add-to-list-panel label { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 13px; cursor: pointer; }
 
         /* Auth modal */
         .auth-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 100; align-items: center; justify-content: center; }
@@ -172,6 +206,10 @@
         <div class="three-columns">
             <div class="column" id="myLinksSection">
                 <h2>Links</h2>
+                <div class="new-list-row">
+                    <input type="text" id="newListInput" placeholder="New list name" />
+                    <button type="button" id="addListBtn">New list</button>
+                </div>
                 <div class="add-link-row">
                     <input type="text" id="newLinkInput" placeholder="URLs, comma-separated" />
                     <button type="button" id="addLinkBtn">Add</button>
@@ -179,6 +217,7 @@
                 <div class="add-link-row">
                     <input type="text" id="newLinkDisplayName" placeholder="Display names, comma-separated (optional)" />
                 </div>
+                <div class="add-link-lists" id="addLinkListsContainer"></div>
                 <div id="userLinksList"></div>
             </div>
 
@@ -228,6 +267,8 @@
                             <label class="category-option" data-value="all_good" role="option"><input type="checkbox"> All good articles</label>
                             <div class="category-group-label">Sources</div>
                             <label class="category-option" data-value="my_links" role="option"><input type="checkbox"> Links</label>
+                            <div class="category-group-label" id="linkListsGroupLabel" style="display: none;">Link lists</div>
+                            <div id="categoryPanelLinkLists"></div>
                             <div class="category-panel-done" id="categoryPanelDone">Done</div>
                         </div>
                     </div>
