@@ -82,6 +82,9 @@ const LINK_LISTS_KEY = "random_wiki_link_lists";
 const PRESETS_KEY = "random_wiki_presets";
 const CURRENTLY_READING_KEY = "random_wiki_currently_reading";
 
+// Which link list sections are expanded (persists across re-renders)
+let openLinkListIds = new Set();
+
 // Auth state (set when backend is available and user is logged in)
 let loggedInUser = null;
 let readLogCache = null;
@@ -324,22 +327,18 @@ function saveUserLinks(links) {
   }
 }
 
-function addUserLinks(urlInput, displayNameInput, listIds = []) {
+function addUserLinks(urlInput, listIds = []) {
   const urlStrings = (urlInput || "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const names = (displayNameInput || "")
-    .split(",")
-    .map((s) => s.trim());
 
   const links = getUserLinks();
   const added = [];
   for (let i = 0; i < urlStrings.length; i++) {
     const url = normalizeUrl(urlStrings[i]);
     if (!url || links.some((l) => l.url === url) || added.some((a) => a.url === url)) continue;
-    const displayName = names[i] || "";
-    const title = displayName || deriveTitleFromUrl(url);
+    const title = deriveTitleFromUrl(url);
     added.push({ url, title, date: new Date().toISOString(), notes: "" });
   }
   if (!added.length) return 0;
@@ -669,10 +668,17 @@ function renderUserLinks() {
   const urlsInAnyList = new Set();
   linkLists.forEach((list) => list.urls.forEach((u) => urlsInAnyList.add(u)));
 
+  // Capture current open state from DOM before replacing (so re-renders preserve it)
+  container.querySelectorAll(".link-list-section.open").forEach((s) => {
+    const id = s.getAttribute("data-list-id");
+    if (id) openLinkListIds.add(id);
+  });
+
   let html = "";
+  const openClass = (id) => (openLinkListIds.has(id) ? " link-list-section open" : " link-list-section");
 
   if (linkLists.length === 0) {
-    html = `<div class="link-list-section open">
+    html = `<div class="${openClass("all").trim()}" data-list-id="all">
       <div class="link-list-header">
         <span>All links</span>
         <span class="link-list-chevron">&#9662;</span>
@@ -683,7 +689,7 @@ function renderUserLinks() {
     for (const list of linkLists) {
       const listLinks = links.filter((l) => list.urls.includes(l.url));
       if (listLinks.length === 0) continue;
-      html += `<div class="link-list-section open" data-list-id="${escapeHtml(list.id)}">
+      html += `<div class="${openClass(list.id).trim()}" data-list-id="${escapeHtml(list.id)}">
         <div class="link-list-header">
           <span class="link-list-name">${escapeHtml(list.name)}</span>
           <span class="link-list-actions">
@@ -697,7 +703,7 @@ function renderUserLinks() {
     }
     const unlistedLinks = links.filter((l) => !urlsInAnyList.has(l.url));
     if (unlistedLinks.length > 0) {
-      html += `<div class="link-list-section open" data-list-id="unlisted">
+      html += `<div class="${openClass("unlisted").trim()}" data-list-id="unlisted">
         <div class="link-list-header">
           <span>Unlisted</span>
           <span class="link-list-chevron">&#9662;</span>
@@ -713,7 +719,11 @@ function renderUserLinks() {
     h.addEventListener("click", (e) => {
       if (e.target.closest(".link-list-rename") || e.target.closest(".link-list-delete")) return;
       const section = h.closest(".link-list-section");
-      section?.classList.toggle("open");
+      if (!section) return;
+      const id = section.getAttribute("data-list-id");
+      section.classList.toggle("open");
+      if (section.classList.contains("open")) openLinkListIds.add(id);
+      else openLinkListIds.delete(id);
     });
   });
   container.querySelectorAll(".link-list-rename").forEach((el) => {
@@ -1599,12 +1609,10 @@ document.addEventListener("DOMContentLoaded", () => {
   initAuth();
   function tryAddLink() {
     const urlInput = document.getElementById("newLinkInput");
-    const displayNameInput = document.getElementById("newLinkDisplayName");
     const listIds = getSelectedAddLinkListIds();
-    const count = addUserLinks(urlInput?.value, displayNameInput?.value, listIds);
+    const count = addUserLinks(urlInput?.value, listIds);
     if (count > 0) {
       if (urlInput) urlInput.value = "";
-      if (displayNameInput) displayNameInput.value = "";
       document.querySelectorAll(".add-link-list-check:checked").forEach((cb) => { cb.checked = false; });
       return true;
     }
@@ -1625,13 +1633,12 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("addLinkBtn")?.addEventListener("click", () => {
     if (!tryAddLink()) alert("Please enter at least one valid URL.");
   });
-  document.getElementById("newLinkInput")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (!tryAddLink()) alert("Please enter at least one valid URL.");
-    }
+  document.getElementById("collapseAllListsBtn")?.addEventListener("click", () => {
+    openLinkListIds.clear();
+    const listEl = document.getElementById("userLinksList");
+    listEl?.querySelectorAll(".link-list-section.open").forEach((s) => s.classList.remove("open"));
   });
-  document.getElementById("newLinkDisplayName")?.addEventListener("keydown", (e) => {
+  document.getElementById("newLinkInput")?.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
       if (!tryAddLink()) alert("Please enter at least one valid URL.");
