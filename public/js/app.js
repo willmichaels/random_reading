@@ -928,12 +928,19 @@ function renderReadLog() {
     container.innerHTML = '<p class="read-log-empty">No articles logged yet.</p>';
     return;
   }
+  const collapsedMonths = JSON.parse(localStorage.getItem("readLogCollapsedMonths") || "[]");
   const byMonth = groupLogByMonth(log);
   container.innerHTML = byMonth
     .map(
-      ({ key, entries }) => `
-    <div class="read-log-month">
-      <div class="read-log-month-header">${escapeHtml(formatMonthHeader(key))} <span class="read-log-month-count">(${entries.length})</span></div>
+      ({ key, entries }) => {
+        const isOpen = !collapsedMonths.includes(key);
+        return `
+    <div class="read-log-month ${isOpen ? "open" : ""}" data-month-key="${escapeHtml(key)}">
+      <div class="read-log-month-header">
+        <span class="read-log-month-chevron">&#9662;</span>
+        ${escapeHtml(formatMonthHeader(key))} <span class="read-log-month-count">(${entries.length})</span>
+      </div>
+      <div class="read-log-month-content">
       ${entries
         .map(
           (e) => `
@@ -952,9 +959,27 @@ function renderReadLog() {
     </div>`
         )
         .join("")}
-    </div>`
+      </div>
+    </div>`;
+      }
     )
     .join("");
+  container.querySelectorAll(".read-log-month-header").forEach((el) => {
+    el.addEventListener("click", () => {
+      const section = el.closest(".read-log-month");
+      const key = section?.getAttribute("data-month-key");
+      if (!key) return;
+      const collapsed = JSON.parse(localStorage.getItem("readLogCollapsedMonths") || "[]");
+      const idx = collapsed.indexOf(key);
+      if (idx >= 0) {
+        collapsed.splice(idx, 1);
+      } else {
+        collapsed.push(key);
+      }
+      localStorage.setItem("readLogCollapsedMonths", JSON.stringify(collapsed));
+      section?.classList.toggle("open");
+    });
+  });
   container.querySelectorAll(".read-log-edit").forEach((el) => {
     el.addEventListener("click", () => {
       const entry = el.closest(".read-log-entry");
