@@ -257,7 +257,12 @@ function renderCurrentlyReading() {
     });
   });
   container.querySelectorAll(".currently-reading-remove").forEach((el) => {
-    el.addEventListener("click", () => removeFromCurrentlyReading(Number(el.dataset.index)));
+    el.addEventListener("click", () => {
+      const entry = getCurrentlyReading()[Number(el.dataset.index)];
+      const url = entry?.url;
+      if (url) removeLinkCompletely(url);
+      else removeFromCurrentlyReading(Number(el.dataset.index));
+    });
   });
 }
 
@@ -386,6 +391,42 @@ function removeUserLinkByUrl(url) {
   }
 }
 
+/**
+ * Remove a link entirely from the database and from all lists it appears in
+ * (user links, link lists, currently reading, read log).
+ */
+function removeLinkCompletely(url) {
+  if (!url) return;
+  const links = getUserLinks();
+  const hasInLinks = links.some((l) => l.url === url);
+  if (hasInLinks) {
+    removeUserLinkByUrl(url);
+  }
+  const linkLists = getLinkLists();
+  for (const list of linkLists) {
+    if (list.urls.includes(url)) {
+      removeUrlFromList(list.id, url);
+    }
+  }
+  const cr = getCurrentlyReading();
+  const crIdx = cr.findIndex((e) => e.url === url);
+  if (crIdx >= 0) {
+    removeFromCurrentlyReading(crIdx);
+  }
+  const log = getReadLog();
+  const logIdx = log.findIndex((e) => e.url === url);
+  if (logIdx >= 0) {
+    removeFromLog(logIdx);
+  }
+  if (hasInLinks) {
+    renderUserLinks();
+  }
+  renderCurrentlyReading();
+  renderReadLog();
+  renderCategoryPanelLinkLists();
+  renderPresets();
+}
+
 function addUserLink(url, title, notes = "") {
   const links = getUserLinks();
   if (links.some((l) => l.url === url)) return;
@@ -485,6 +526,12 @@ function toggleUrlInList(listId, url) {
     list.urls = [...list.urls, url];
   }
   saveLinkLists(lists);
+}
+
+function linkListCountHtml(n) {
+  const count = Number(n) || 0;
+  const label = `${count} link${count === 1 ? "" : "s"}`;
+  return `<span class="link-list-count" aria-label="${escapeHtml(label)}">${count}</span>`;
 }
 
 // --- Presets ---
@@ -618,7 +665,7 @@ function renderAddLinkLists() {
     lists
       .map(
         (l) =>
-          `<label><input type="checkbox" class="add-link-list-check" data-list-id="${escapeHtml(l.id)}"> ${escapeHtml(l.name)}</label>`
+          `<label><input type="checkbox" class="add-link-list-check" data-list-id="${escapeHtml(l.id)}"> ${escapeHtml(l.name)} ${linkListCountHtml(l.urls.length)}</label>`
       )
       .join("");
 }
@@ -680,7 +727,7 @@ function renderUserLinks() {
   if (linkLists.length === 0) {
     html = `<div class="${openClass("all").trim()}" data-list-id="all">
       <div class="link-list-header">
-        <span>All links</span>
+        <span class="link-list-name">All links ${linkListCountHtml(links.length)}</span>
         <span class="link-list-chevron">&#9662;</span>
       </div>
       <div class="link-list-content">${links.map((e, i) => renderLinkEntry(e, i)).join("")}</div>
@@ -691,7 +738,7 @@ function renderUserLinks() {
       if (listLinks.length === 0) continue;
       html += `<div class="${openClass(list.id).trim()}" data-list-id="${escapeHtml(list.id)}">
         <div class="link-list-header">
-          <span class="link-list-name">${escapeHtml(list.name)}</span>
+          <span class="link-list-name">${escapeHtml(list.name)} ${linkListCountHtml(list.urls.length)}</span>
           <span class="link-list-actions">
             <span class="link-list-rename" data-list-id="${escapeHtml(list.id)}" data-name="${escapeHtml(list.name)}">Rename</span>
             <span class="link-list-delete" data-list-id="${escapeHtml(list.id)}">Delete</span>
@@ -705,7 +752,7 @@ function renderUserLinks() {
     if (unlistedLinks.length > 0) {
       html += `<div class="${openClass("unlisted").trim()}" data-list-id="unlisted">
         <div class="link-list-header">
-          <span>Unlisted</span>
+          <span class="link-list-name">Unlisted ${linkListCountHtml(unlistedLinks.length)}</span>
           <span class="link-list-chevron">&#9662;</span>
         </div>
         <div class="link-list-content">${unlistedLinks.map((e) => renderLinkEntry(e, urlToIndex.get(e.url))).join("")}</div>
@@ -794,7 +841,7 @@ function renderUserLinks() {
     panel.innerHTML = lists
       .map((l) => {
         const inList = l.urls.includes(url);
-        return `<label><input type="checkbox" ${inList ? "checked" : ""} data-list-id="${escapeHtml(l.id)}"> ${escapeHtml(l.name)}</label>`;
+        return `<label><input type="checkbox" ${inList ? "checked" : ""} data-list-id="${escapeHtml(l.id)}"> ${escapeHtml(l.name)} ${linkListCountHtml(l.urls.length)}</label>`;
       })
       .join("");
     trigger.addEventListener("click", (e) => {
@@ -828,13 +875,49 @@ function renderUserLinks() {
     });
   });
   container.querySelectorAll(".user-link-remove").forEach((el) => {
-    el.addEventListener("click", () => removeUserLink(Number(el.dataset.index)));
+    el.addEventListener("click", () => {
+      const url = el.closest(".user-link-entry")?.dataset?.url;
+      if (url) removeLinkCompletely(url);
+    });
   });
   container.querySelectorAll(".user-link-entry .entry-note").forEach((el) => {
     el.addEventListener("blur", () => updateUserLinkNote(Number(el.dataset.index), el.value));
   });
 
   renderAddLinkLists();
+}
+
+function groupLogByMonth(log) {
+  const byMonth = new Map();
+  for (let i = 0; i < log.length; i++) {
+    const e = log[i];
+    let monthKey = "Unknown";
+    try {
+      const d = new Date(e.date);
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      monthKey = `${year}-${String(month).padStart(2, "0")}`;
+    } catch (_) {}
+    if (!byMonth.has(monthKey)) byMonth.set(monthKey, []);
+    byMonth.get(monthKey).push({ ...e, _index: i });
+  }
+  const sortedKeys = [...byMonth.keys()].sort((a, b) => {
+    if (a === "Unknown") return 1;
+    if (b === "Unknown") return -1;
+    return b.localeCompare(a);
+  });
+  return sortedKeys.map((key) => ({ key, entries: byMonth.get(key) }));
+}
+
+function formatMonthHeader(key) {
+  if (key === "Unknown") return "Unknown";
+  try {
+    const [year, month] = key.split("-").map(Number);
+    const d = new Date(year, month, 1);
+    return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  } catch {
+    return key;
+  }
 }
 
 function renderReadLog() {
@@ -845,21 +928,30 @@ function renderReadLog() {
     container.innerHTML = '<p class="read-log-empty">No articles logged yet.</p>';
     return;
   }
-  container.innerHTML = log
+  const byMonth = groupLogByMonth(log);
+  container.innerHTML = byMonth
     .map(
-      (e, i) => `
-    <div class="read-log-entry" data-index="${i}">
+      ({ key, entries }) => `
+    <div class="read-log-month">
+      <div class="read-log-month-header">${escapeHtml(formatMonthHeader(key))} <span class="read-log-month-count">(${entries.length})</span></div>
+      ${entries
+        .map(
+          (e) => `
+    <div class="read-log-entry" data-index="${e._index}">
       <div class="entry-main">
         <span class="entry-title-wrap"><a href="${escapeHtml(e.url)}" target="_blank">${escapeHtml(e.title)}</a></span>
         <span class="read-log-meta">${escapeHtml(e.category)} &middot; ${formatLogDate(e.date)}</span>
-        <input type="text" class="entry-note" data-index="${i}" placeholder="Add note..." value="${escapeHtml(e.notes || "")}" />
+        <input type="text" class="entry-note" data-index="${e._index}" placeholder="Add note..." value="${escapeHtml(e.notes || "")}" />
       </div>
       <span class="read-log-actions">
-        <span class="read-log-edit" data-index="${i}">Edit</span>
-        <span class="read-log-reading" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-category-key="${escapeHtml(getCategoryKeyFromLabel(e.category))}">Reading</span>
-        <span class="read-log-links" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-notes="${escapeHtml(e.notes || "")}">Links</span>
-        <span class="read-log-remove" data-index="${i}">Remove</span>
+        <span class="read-log-edit" data-index="${e._index}">Edit</span>
+        <span class="read-log-reading" data-index="${e._index}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-category-key="${escapeHtml(getCategoryKeyFromLabel(e.category))}">Reading</span>
+        <span class="read-log-links" data-index="${e._index}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-notes="${escapeHtml(e.notes || "")}">Links</span>
+        <span class="read-log-remove" data-index="${e._index}">Remove</span>
       </span>
+    </div>`
+        )
+        .join("")}
     </div>`
     )
     .join("");
@@ -908,7 +1000,12 @@ function renderReadLog() {
     });
   });
   container.querySelectorAll(".read-log-remove").forEach((el) => {
-    el.addEventListener("click", () => removeFromLog(Number(el.dataset.index)));
+    el.addEventListener("click", () => {
+      const entry = getReadLog()[Number(el.dataset.index)];
+      const url = entry?.url;
+      if (url) removeLinkCompletely(url);
+      else removeFromLog(Number(el.dataset.index));
+    });
   });
   container.querySelectorAll(".read-log-entry .entry-note").forEach((el) => {
     el.addEventListener("blur", () => updateLogEntryNote(Number(el.dataset.index), el.value));
@@ -1104,10 +1201,13 @@ async function fetchArticle() {
     return;
   }
 
+  const removeHtml = isFromLinks
+    ? ` &middot; <span class="remove-link" data-url="${escapeHtml(url)}">Remove</span>`
+    : "";
   let html = `
     <div>Read: <a href="${escapeHtml(url)}" target="_blank">${escapeHtml(title)}</a></div>
     <div class="meta">Category: ${escapeHtml(categoryLabel)}</div>
-    <div class="meta" style="margin-top: 12px;"><span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}" data-from-links="${isFromLinks}">Log</span> &middot; <span class="add-to-currently-reading-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}" data-from-links="${isFromLinks}">Reading</span></div>
+    <div class="meta" style="margin-top: 12px;"><span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}" data-from-links="${isFromLinks}">Log</span> &middot; <span class="add-to-currently-reading-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}" data-from-links="${isFromLinks}">Reading</span>${removeHtml}</div>
   `;
 
   resultDiv.innerHTML = html;
@@ -1126,6 +1226,12 @@ async function fetchArticle() {
         removeUserLinkByUrl(el.dataset.url);
       }
       addToCurrentlyReading(el.dataset.url, el.dataset.title, el.dataset.category);
+    });
+  });
+  resultDiv.querySelectorAll(".remove-link").forEach((el) => {
+    el.addEventListener("click", () => {
+      removeLinkCompletely(el.dataset.url);
+      resultDiv.innerHTML = "Link removed.";
     });
   });
 }
@@ -1505,7 +1611,7 @@ function renderCategoryPanelLinkLists() {
   container.innerHTML = lists
     .map(
       (l) =>
-        `<label class="category-option" data-value="linklist:${escapeHtml(l.id)}" role="option"><input type="checkbox"> ${escapeHtml(l.name)}</label>`
+        `<label class="category-option" data-value="linklist:${escapeHtml(l.id)}" role="option"><input type="checkbox"> ${escapeHtml(l.name)} ${linkListCountHtml(l.urls.length)}</label>`
     )
     .join("");
 }
