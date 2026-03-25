@@ -676,6 +676,20 @@ function getSelectedAddLinkListIds() {
   );
 }
 
+/** Renders a URL that appears in a list but has no matching user link (stale reference). */
+function renderOrphanListEntry(url, listId) {
+  return `
+    <div class="user-link-entry user-link-entry-orphan" data-url="${escapeHtml(url)}" data-list-id="${escapeHtml(listId)}">
+      <div class="entry-main">
+        <span class="entry-title-wrap"><a href="${escapeHtml(url)}" target="_blank">${escapeHtml(deriveTitleFromUrl(url))}</a></span>
+        <span class="user-link-meta">Not in your links</span>
+      </div>
+      <span class="user-link-actions">
+        <span class="user-link-remove-from-list" data-list-id="${escapeHtml(listId)}" data-url="${escapeHtml(url)}">Remove from list</span>
+      </span>
+    </div>`;
+}
+
 function renderLinkEntry(link, index) {
   return `
     <div class="user-link-entry" data-index="${index}" data-url="${escapeHtml(link.url)}">
@@ -734,8 +748,16 @@ function renderUserLinks() {
     </div>`;
   } else {
     for (const list of linkLists) {
-      const listLinks = links.filter((l) => list.urls.includes(l.url));
-      if (listLinks.length === 0) continue;
+      if (list.urls.length === 0) continue;
+      const listContentHtml = list.urls
+        .map((listUrl) => {
+          if (urlToIndex.has(listUrl)) {
+            const idx = urlToIndex.get(listUrl);
+            return renderLinkEntry(links[idx], idx);
+          }
+          return renderOrphanListEntry(listUrl, list.id);
+        })
+        .join("");
       html += `<div class="${openClass(list.id).trim()}" data-list-id="${escapeHtml(list.id)}">
         <div class="link-list-header">
           <span class="link-list-name">${escapeHtml(list.name)} ${linkListCountHtml(list.urls.length)}</span>
@@ -745,7 +767,7 @@ function renderUserLinks() {
           </span>
           <span class="link-list-chevron">&#9662;</span>
         </div>
-        <div class="link-list-content">${listLinks.map((e) => renderLinkEntry(e, urlToIndex.get(e.url))).join("")}</div>
+        <div class="link-list-content">${listContentHtml}</div>
       </div>`;
     }
     const unlistedLinks = links.filter((l) => !urlsInAnyList.has(l.url));
@@ -878,6 +900,17 @@ function renderUserLinks() {
     el.addEventListener("click", () => {
       const url = el.closest(".user-link-entry")?.dataset?.url;
       if (url) removeLinkCompletely(url);
+    });
+  });
+  container.querySelectorAll(".user-link-remove-from-list").forEach((el) => {
+    el.addEventListener("click", () => {
+      const listId = el.dataset.listId;
+      const url = el.dataset.url;
+      if (listId && url) {
+        removeUrlFromList(listId, url);
+        renderUserLinks();
+        renderCategoryPanelLinkLists();
+      }
     });
   });
   container.querySelectorAll(".user-link-entry .entry-note").forEach((el) => {
