@@ -130,6 +130,8 @@ function saveReadLog(log) {
 }
 
 function logArticle(url, title, category) {
+  if (!url) return;
+  stripArticleFromLinksListsAndReading(url);
   const log = getReadLog();
   const categoryLabel = CATEGORY_LABELS[category] || category;
   const existing = log.findIndex((e) => e.url === url);
@@ -142,6 +144,10 @@ function logArticle(url, title, category) {
   }
   saveReadLog(log);
   renderReadLog();
+  renderUserLinks();
+  renderCurrentlyReading();
+  renderCategoryPanelLinkLists();
+  renderPresets();
 }
 
 function updateLogEntryNote(index, notes) {
@@ -252,7 +258,6 @@ function renderCurrentlyReading() {
   });
   container.querySelectorAll(".currently-reading-log").forEach((el) => {
     el.addEventListener("click", () => {
-      removeFromCurrentlyReading(Number(el.dataset.index));
       logArticle(el.dataset.url, el.dataset.title, el.dataset.categoryKey || "my_links");
     });
   });
@@ -425,6 +430,32 @@ function removeLinkCompletely(url) {
   renderReadLog();
   renderCategoryPanelLinkLists();
   renderPresets();
+}
+
+/**
+ * Remove `url` from user links, every link list, and currently reading.
+ * Does not modify the read log. Used when moving an article to the log.
+ */
+function stripArticleFromLinksListsAndReading(url) {
+  if (!url) return;
+  const links = getUserLinks();
+  const idx = links.findIndex((l) => l.url === url);
+  if (idx >= 0) {
+    links.splice(idx, 1);
+    saveUserLinks(links);
+  }
+  const linkLists = getLinkLists();
+  for (const list of linkLists) {
+    if (list.urls.includes(url)) {
+      removeUrlFromList(list.id, url);
+    }
+  }
+  const cr = getCurrentlyReading();
+  const crIdx = cr.findIndex((e) => e.url === url);
+  if (crIdx >= 0) {
+    cr.splice(crIdx, 1);
+    saveCurrentlyReading(cr);
+  }
 }
 
 function addUserLink(url, title, notes = "") {
@@ -891,8 +922,6 @@ function renderUserLinks() {
   });
   container.querySelectorAll(".user-link-log").forEach((el) => {
     el.addEventListener("click", () => {
-      const index = Number(el.dataset.index);
-      removeUserLink(index);
       logArticle(el.dataset.url, el.dataset.title, "my_links");
     });
   });
@@ -1272,9 +1301,6 @@ async function fetchArticle() {
 
   resultDiv.querySelectorAll(".log-article-link").forEach((el) => {
     el.addEventListener("click", () => {
-      if (el.dataset.fromLinks === "true") {
-        removeUserLinkByUrl(el.dataset.url);
-      }
       logArticle(el.dataset.url, el.dataset.title, el.dataset.category);
     });
   });
