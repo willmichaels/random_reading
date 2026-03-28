@@ -748,7 +748,7 @@ function renderUserLinks() {
   const links = getUserLinks();
   const linkLists = getLinkLists();
 
-  if (!links.length) {
+  if (!links.length && linkLists.length === 0) {
     container.innerHTML = '<p class="my-links-empty">No links yet. Add a URL above.</p>';
     renderAddLinkLists();
     return;
@@ -769,6 +769,10 @@ function renderUserLinks() {
   let html = "";
   const openClass = (id) => (openLinkListIds.has(id) ? " link-list-section open" : " link-list-section");
 
+  if (!links.length && linkLists.length > 0) {
+    html += '<p class="my-links-empty">No links yet. Add a URL above.</p>';
+  }
+
   if (linkLists.length === 0) {
     html = `<div class="${openClass("all").trim()}" data-list-id="all">
       <div class="link-list-header">
@@ -779,16 +783,18 @@ function renderUserLinks() {
     </div>`;
   } else {
     for (const list of linkLists) {
-      if (list.urls.length === 0) continue;
-      const listContentHtml = list.urls
-        .map((listUrl) => {
-          if (urlToIndex.has(listUrl)) {
-            const idx = urlToIndex.get(listUrl);
-            return renderLinkEntry(links[idx], idx);
-          }
-          return renderOrphanListEntry(listUrl, list.id);
-        })
-        .join("");
+      const listContentHtml =
+        list.urls.length === 0
+          ? '<p class="link-list-empty-msg">No links in this list.</p>'
+          : list.urls
+              .map((listUrl) => {
+                if (urlToIndex.has(listUrl)) {
+                  const idx = urlToIndex.get(listUrl);
+                  return renderLinkEntry(links[idx], idx);
+                }
+                return renderOrphanListEntry(listUrl, list.id);
+              })
+              .join("");
       html += `<div class="${openClass(list.id).trim()}" data-list-id="${escapeHtml(list.id)}">
         <div class="link-list-header">
           <span class="link-list-name">${escapeHtml(list.name)} ${linkListCountHtml(list.urls.length)}</span>
