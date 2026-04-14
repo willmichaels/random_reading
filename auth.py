@@ -118,3 +118,15 @@ def save_currently_reading(username: str, items: list):
     if not isinstance(items, list):
         return
     get_storage().save_currently_reading(username, items)
+
+
+def get_link_posts(username: str) -> list:
+    """Get user's link posts queue."""
+    return get_storage().get_link_posts(username)
+
+
+def save_link_posts(username: str, items: list):
+    """Save user's link posts queue."""
+    if not isinstance(items, list):
+        return
+    get_storage().save_link_posts(username, items)

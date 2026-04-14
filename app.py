@@ -12,6 +12,7 @@ from auth import (
     SESSION_COOKIE,
     get_currently_reading,
     get_link_lists,
+    get_link_posts,
     get_log,
     get_presets,
     get_user_links,
@@ -20,6 +21,7 @@ from auth import (
     register as auth_register,
     save_currently_reading,
     save_link_lists,
+    save_link_posts,
     save_log,
     save_presets,
     save_user_links,
@@ -226,4 +228,28 @@ async def api_save_currently_reading(request: Request):
     if not isinstance(items, list):
         return JSONResponse({"error": "Invalid items"}, status_code=400)
     save_currently_reading(username, items)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/link-posts")
+async def api_get_link_posts(request: Request):
+    session_id = request.cookies.get(SESSION_COOKIE)
+    username = verify_session(session_id)
+    if not username:
+        return JSONResponse({"error": "Not logged in"}, status_code=401)
+    items = get_link_posts(username)
+    return JSONResponse({"items": items})
+
+
+@app.post("/api/link-posts")
+async def api_save_link_posts(request: Request):
+    session_id = request.cookies.get(SESSION_COOKIE)
+    username = verify_session(session_id)
+    if not username:
+        return JSONResponse({"error": "Not logged in"}, status_code=401)
+    body = await request.json()
+    items = body.get("items", [])
+    if not isinstance(items, list):
+        return JSONResponse({"error": "Invalid items"}, status_code=400)
+    save_link_posts(username, items)
     return JSONResponse({"ok": True})

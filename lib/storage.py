@@ -98,6 +98,16 @@ class StorageBackend(ABC):
         """Save user's currently reading list."""
         pass
 
+    @abstractmethod
+    def get_link_posts(self, username: str) -> list:
+        """Get user's link posts queue."""
+        pass
+
+    @abstractmethod
+    def save_link_posts(self, username: str, items: list) -> None:
+        """Save user's link posts queue."""
+        pass
+
 
 class JsonStorage(StorageBackend):
     """File-based JSON storage for local development."""
@@ -112,6 +122,7 @@ class JsonStorage(StorageBackend):
         self._link_lists_dir = self._data_dir / "link_lists"
         self._presets_dir = self._data_dir / "presets"
         self._currently_reading_dir = self._data_dir / "currently_reading"
+        self._link_posts_dir = self._data_dir / "link_posts"
         self._ensure_dirs()
 
     def _ensure_dirs(self):
@@ -121,6 +132,7 @@ class JsonStorage(StorageBackend):
         self._link_lists_dir.mkdir(parents=True, exist_ok=True)
         self._presets_dir.mkdir(parents=True, exist_ok=True)
         self._currently_reading_dir.mkdir(parents=True, exist_ok=True)
+        self._link_posts_dir.mkdir(parents=True, exist_ok=True)
 
     def _load_json(self, path: Path, default: dict | list) -> dict | list:
         if not path.exists():
@@ -218,6 +230,17 @@ class JsonStorage(StorageBackend):
         if not isinstance(items, list):
             return
         path = self._currently_reading_dir / f"{username}.json"
+        self._save_json(path, items)
+
+    def get_link_posts(self, username: str) -> list:
+        path = self._link_posts_dir / f"{username}.json"
+        data = self._load_json(path, [])
+        return data if isinstance(data, list) else []
+
+    def save_link_posts(self, username: str, items: list) -> None:
+        if not isinstance(items, list):
+            return
+        path = self._link_posts_dir / f"{username}.json"
         self._save_json(path, items)
 
 
@@ -338,6 +361,23 @@ class RedisUrlStorage(StorageBackend):
         if not isinstance(items, list):
             return
         key = f"wiki:currently_reading:{username}"
+        self._redis.set(key, json.dumps(items))
+
+    def get_link_posts(self, username: str) -> list:
+        key = f"wiki:link_posts:{username}"
+        val = self._redis.get(key)
+        if not val:
+            return []
+        try:
+            data = json.loads(val)
+            return data if isinstance(data, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def save_link_posts(self, username: str, items: list) -> None:
+        if not isinstance(items, list):
+            return
+        key = f"wiki:link_posts:{username}"
         self._redis.set(key, json.dumps(items))
 
 
@@ -481,6 +521,23 @@ class RedisStorage(StorageBackend):
         if not isinstance(items, list):
             return
         key = f"wiki:currently_reading:{username}"
+        self._redis.set(key, json.dumps(items))
+
+    def get_link_posts(self, username: str) -> list:
+        key = f"wiki:link_posts:{username}"
+        val = self._redis.get(key)
+        if not val:
+            return []
+        try:
+            data = json.loads(val)
+            return data if isinstance(data, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def save_link_posts(self, username: str, items: list) -> None:
+        if not isinstance(items, list):
+            return
+        key = f"wiki:link_posts:{username}"
         self._redis.set(key, json.dumps(items))
 
 

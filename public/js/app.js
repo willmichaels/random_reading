@@ -81,6 +81,7 @@ const USER_LINKS_KEY = "random_wiki_user_links";
 const LINK_LISTS_KEY = "random_wiki_link_lists";
 const PRESETS_KEY = "random_wiki_presets";
 const CURRENTLY_READING_KEY = "random_wiki_currently_reading";
+const LINK_POSTS_KEY = "random_wiki_link_posts";
 
 // Which link list sections are expanded (persists across re-renders)
 let openLinkListIds = new Set();
@@ -92,6 +93,7 @@ let userLinksCache = null;
 let linkListsCache = null;
 let presetsCache = null;
 let currentlyReadingCache = null;
+let linkPostsCache = null;
 
 const fetchOpts = { credentials: "include" };
 
@@ -131,7 +133,7 @@ function saveReadLog(log) {
 
 function logArticle(url, title, category) {
   if (!url) return;
-  stripArticleFromLinksListsAndReading(url);
+  stripArticleFromLinksListsReadingAndLinkPosts(url);
   const log = getReadLog();
   const categoryLabel = CATEGORY_LABELS[category] || category;
   const existing = log.findIndex((e) => e.url === url);
@@ -146,6 +148,7 @@ function logArticle(url, title, category) {
   renderReadLog();
   renderUserLinks();
   renderCurrentlyReading();
+  renderLinkPosts();
   renderCategoryPanelLinkLists();
   renderPresets();
 }
@@ -203,6 +206,7 @@ function saveCurrentlyReading(items) {
 }
 
 function addToCurrentlyReading(url, title, category) {
+  removeFromLinkPostsByUrl(url);
   const items = getCurrentlyReading();
   if (items.some((e) => e.url === url)) return;
   const categoryLabel = category ? (CATEGORY_LABELS[category] || category) : "";
@@ -216,6 +220,7 @@ function addToCurrentlyReading(url, title, category) {
   });
   saveCurrentlyReading(items);
   renderCurrentlyReading();
+  renderLinkPosts();
 }
 
 function removeFromCurrentlyReading(index) {
@@ -244,6 +249,7 @@ function renderCurrentlyReading() {
       </div>
       <span class="currently-reading-actions">
         <span class="currently-reading-links" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-notes="${escapeHtml(e.notes || "")}">Links</span>
+        <span class="currently-reading-link-posts" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-category-key="${escapeHtml(e.categoryKey || "my_links")}">Link posts</span>
         <span class="currently-reading-log" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-category-key="${escapeHtml(e.categoryKey || "my_links")}">Log</span>
         <span class="currently-reading-remove" data-index="${i}">Remove</span>
       </span>
@@ -254,6 +260,11 @@ function renderCurrentlyReading() {
     el.addEventListener("click", () => {
       removeFromCurrentlyReading(Number(el.dataset.index));
       addUserLink(el.dataset.url, el.dataset.title, el.dataset.notes);
+    });
+  });
+  container.querySelectorAll(".currently-reading-link-posts").forEach((el) => {
+    el.addEventListener("click", () => {
+      addToLinkPosts(el.dataset.url, el.dataset.title, el.dataset.categoryKey || "my_links");
     });
   });
   container.querySelectorAll(".currently-reading-log").forEach((el) => {
@@ -267,6 +278,121 @@ function renderCurrentlyReading() {
       const url = entry?.url;
       if (url) removeLinkCompletely(url);
       else removeFromCurrentlyReading(Number(el.dataset.index));
+    });
+  });
+}
+
+// --- Link posts (parallel queue to currently reading) ---
+
+function getLinkPosts() {
+  if (loggedInUser !== null && linkPostsCache !== null) {
+    return linkPostsCache;
+  }
+  try {
+    const raw = localStorage.getItem(LINK_POSTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLinkPosts(items) {
+  if (loggedInUser !== null) {
+    linkPostsCache = [...items];
+    apiFetch("/api/link-posts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items })
+    }).catch((e) => console.error("Failed to sync link posts:", e));
+    return;
+  }
+  try {
+    localStorage.setItem(LINK_POSTS_KEY, JSON.stringify(items));
+  } catch (e) {
+    console.error("Failed to save link posts:", e);
+  }
+}
+
+function removeFromLinkPostsByUrl(url) {
+  if (!url) return;
+  const items = getLinkPosts();
+  const idx = items.findIndex((e) => e.url === url);
+  if (idx < 0) return;
+  items.splice(idx, 1);
+  saveLinkPosts(items);
+}
+
+function addToLinkPosts(url, title, category) {
+  if (!url) return;
+  if (getLinkPosts().some((e) => e.url === url)) return;
+  stripArticleFromLinksListsReadingAndLinkPosts(url);
+  const categoryLabel = category ? (CATEGORY_LABELS[category] || category) : "";
+  const items = getLinkPosts();
+  items.unshift({
+    url,
+    title: title || deriveTitleFromUrl(url),
+    category: categoryLabel,
+    categoryKey: category || "my_links",
+    date: new Date().toISOString(),
+    notes: ""
+  });
+  saveLinkPosts(items);
+  renderLinkPosts();
+  renderUserLinks();
+  renderCurrentlyReading();
+  renderCategoryPanelLinkLists();
+  renderPresets();
+}
+
+function renderLinkPosts() {
+  const container = document.getElementById("linkPostsList");
+  if (!container) return;
+  const items = getLinkPosts();
+  if (!items.length) {
+    container.innerHTML =
+      '<p class="link-posts-empty">Nothing in link posts. Add articles from Links, the article selector, the log, or currently reading.</p>';
+    return;
+  }
+  container.innerHTML = items
+    .map(
+      (e, i) => `
+    <div class="link-posts-entry" data-index="${i}">
+      <div class="entry-main">
+        <span class="entry-title-wrap"><a href="${escapeHtml(e.url)}" target="_blank">${escapeHtml(e.title)}</a></span>
+        <span class="link-posts-meta">${escapeHtml(e.category || "—")}</span>
+      </div>
+      <span class="link-posts-actions">
+        <span class="link-posts-reading" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-category-key="${escapeHtml(e.categoryKey || "my_links")}">Reading</span>
+        <span class="link-posts-links" data-index="${i}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-notes="${escapeHtml(e.notes || "")}">Links</span>
+        <span class="link-posts-log" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-category-key="${escapeHtml(e.categoryKey || "my_links")}">Log</span>
+        <span class="link-posts-remove" data-index="${i}">Remove</span>
+      </span>
+    </div>`
+    )
+    .join("");
+  container.querySelectorAll(".link-posts-reading").forEach((el) => {
+    el.addEventListener("click", () => {
+      addToCurrentlyReading(el.dataset.url, el.dataset.title, el.dataset.categoryKey || "my_links");
+    });
+  });
+  container.querySelectorAll(".link-posts-links").forEach((el) => {
+    el.addEventListener("click", () => {
+      removeFromLinkPostsByUrl(el.dataset.url);
+      addUserLink(el.dataset.url, el.dataset.title, el.dataset.notes);
+      renderLinkPosts();
+      renderUserLinks();
+    });
+  });
+  container.querySelectorAll(".link-posts-log").forEach((el) => {
+    el.addEventListener("click", () => {
+      logArticle(el.dataset.url, el.dataset.title, el.dataset.categoryKey || "my_links");
+    });
+  });
+  container.querySelectorAll(".link-posts-remove").forEach((el) => {
+    el.addEventListener("click", () => {
+      const entry = getLinkPosts()[Number(el.dataset.index)];
+      const url = entry?.url;
+      if (url) removeLinkCompletely(url);
     });
   });
 }
@@ -418,6 +544,12 @@ function removeLinkCompletely(url) {
   if (crIdx >= 0) {
     removeFromCurrentlyReading(crIdx);
   }
+  const lp = getLinkPosts();
+  const lpIdx = lp.findIndex((e) => e.url === url);
+  if (lpIdx >= 0) {
+    lp.splice(lpIdx, 1);
+    saveLinkPosts(lp);
+  }
   const log = getReadLog();
   const logIdx = log.findIndex((e) => e.url === url);
   if (logIdx >= 0) {
@@ -427,16 +559,17 @@ function removeLinkCompletely(url) {
     renderUserLinks();
   }
   renderCurrentlyReading();
+  renderLinkPosts();
   renderReadLog();
   renderCategoryPanelLinkLists();
   renderPresets();
 }
 
 /**
- * Remove `url` from user links, every link list, and currently reading.
+ * Remove `url` from user links, every link list, currently reading, and link posts.
  * Does not modify the read log. Used when moving an article to the log.
  */
-function stripArticleFromLinksListsAndReading(url) {
+function stripArticleFromLinksListsReadingAndLinkPosts(url) {
   if (!url) return;
   const links = getUserLinks();
   const idx = links.findIndex((l) => l.url === url);
@@ -455,6 +588,12 @@ function stripArticleFromLinksListsAndReading(url) {
   if (crIdx >= 0) {
     cr.splice(crIdx, 1);
     saveCurrentlyReading(cr);
+  }
+  const lp = getLinkPosts();
+  const lpIdx = lp.findIndex((e) => e.url === url);
+  if (lpIdx >= 0) {
+    lp.splice(lpIdx, 1);
+    saveLinkPosts(lp);
   }
 }
 
@@ -736,6 +875,7 @@ function renderLinkEntry(link, index) {
           <div class="user-link-add-to-list-panel"></div>
         </span>
         <span class="user-link-reading" data-index="${index}" data-url="${escapeHtml(link.url)}" data-title="${escapeHtml(link.title || deriveTitleFromUrl(link.url))}">Reading</span>
+        <span class="user-link-link-posts" data-url="${escapeHtml(link.url)}" data-title="${escapeHtml(link.title || deriveTitleFromUrl(link.url))}">Link posts</span>
         <span class="user-link-log" data-index="${index}" data-url="${escapeHtml(link.url)}" data-title="${escapeHtml(link.title || deriveTitleFromUrl(link.url))}">Log</span>
         <span class="user-link-remove" data-index="${index}">Remove</span>
       </span>
@@ -926,6 +1066,11 @@ function renderUserLinks() {
       addToCurrentlyReading(el.dataset.url, el.dataset.title, "my_links");
     });
   });
+  container.querySelectorAll(".user-link-link-posts").forEach((el) => {
+    el.addEventListener("click", () => {
+      addToLinkPosts(el.dataset.url, el.dataset.title, "my_links");
+    });
+  });
   container.querySelectorAll(".user-link-log").forEach((el) => {
     el.addEventListener("click", () => {
       logArticle(el.dataset.url, el.dataset.title, "my_links");
@@ -1021,6 +1166,7 @@ function renderReadLog() {
       <span class="read-log-actions">
         <span class="read-log-edit" data-index="${e._index}">Edit</span>
         <span class="read-log-reading" data-index="${e._index}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-category-key="${escapeHtml(getCategoryKeyFromLabel(e.category))}">Reading</span>
+        <span class="read-log-link-posts" data-index="${e._index}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-category-key="${escapeHtml(getCategoryKeyFromLabel(e.category))}">Link posts</span>
         <span class="read-log-links" data-index="${e._index}" data-url="${escapeHtml(e.url)}" data-title="${escapeHtml(e.title)}" data-notes="${escapeHtml(e.notes || "")}">Links</span>
         <span class="read-log-remove" data-index="${e._index}">Remove</span>
       </span>
@@ -1084,6 +1230,12 @@ function renderReadLog() {
     el.addEventListener("click", () => {
       removeFromLog(Number(el.dataset.index));
       addToCurrentlyReading(el.dataset.url, el.dataset.title, el.dataset.categoryKey);
+    });
+  });
+  container.querySelectorAll(".read-log-link-posts").forEach((el) => {
+    el.addEventListener("click", () => {
+      removeFromLog(Number(el.dataset.index));
+      addToLinkPosts(el.dataset.url, el.dataset.title, el.dataset.categoryKey);
     });
   });
   container.querySelectorAll(".read-log-links").forEach((el) => {
@@ -1300,7 +1452,7 @@ async function fetchArticle() {
   let html = `
     <div>Read: <a href="${escapeHtml(url)}" target="_blank">${escapeHtml(title)}</a></div>
     <div class="meta">Category: ${escapeHtml(categoryLabel)}</div>
-    <div class="meta" style="margin-top: 12px;"><span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}" data-from-links="${isFromLinks}">Log</span> &middot; <span class="add-to-currently-reading-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}" data-from-links="${isFromLinks}">Reading</span>${removeHtml}</div>
+    <div class="meta" style="margin-top: 12px;"><span class="download-link log-article-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}" data-from-links="${isFromLinks}">Log</span> &middot; <span class="add-to-currently-reading-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}" data-from-links="${isFromLinks}">Reading</span> &middot; <span class="add-to-link-posts-link" data-url="${escapeHtml(url)}" data-title="${escapeHtml(title)}" data-category="${escapeHtml(logCategory)}" data-from-links="${isFromLinks}">Link posts</span>${removeHtml}</div>
   `;
 
   resultDiv.innerHTML = html;
@@ -1316,6 +1468,14 @@ async function fetchArticle() {
         removeUserLinkByUrl(el.dataset.url);
       }
       addToCurrentlyReading(el.dataset.url, el.dataset.title, el.dataset.category);
+    });
+  });
+  resultDiv.querySelectorAll(".add-to-link-posts-link").forEach((el) => {
+    el.addEventListener("click", () => {
+      if (el.dataset.fromLinks === "true") {
+        removeUserLinkByUrl(el.dataset.url);
+      }
+      addToLinkPosts(el.dataset.url, el.dataset.title, el.dataset.category);
     });
   });
   resultDiv.querySelectorAll(".remove-link").forEach((el) => {
@@ -1462,6 +1622,27 @@ async function initAuth() {
       } else {
         currentlyReadingCache = [];
       }
+      const linkPostsRes = await apiFetch("/api/link-posts");
+      if (linkPostsRes.ok) {
+        const lpData = await linkPostsRes.json();
+        const serverLP = lpData.items || [];
+        const localLP = (() => {
+          try {
+            const raw = localStorage.getItem(LINK_POSTS_KEY);
+            return raw ? JSON.parse(raw) : [];
+          } catch {
+            return [];
+          }
+        })();
+        if (localLP.length && !serverLP.length) {
+          linkPostsCache = localLP;
+          saveLinkPosts(localLP);
+        } else {
+          linkPostsCache = serverLP;
+        }
+      } else {
+        linkPostsCache = [];
+      }
     }
   } catch {
     // No backend (e.g. static serve)
@@ -1471,6 +1652,7 @@ async function initAuth() {
   renderUserLinks();
   renderPresets();
   renderCurrentlyReading();
+  renderLinkPosts();
 }
 
 function openAuthModal(mode) {
@@ -1579,12 +1761,20 @@ async function handleAuthSubmit(e) {
       } else {
         currentlyReadingCache = [];
       }
+      const linkPostsRes = await apiFetch("/api/link-posts");
+      if (linkPostsRes.ok) {
+        const lpData = await linkPostsRes.json();
+        linkPostsCache = lpData.items || [];
+      } else {
+        linkPostsCache = [];
+      }
       closeAuthModal();
       updateAuthUI();
       renderReadLog();
       renderUserLinks();
       renderPresets();
       renderCurrentlyReading();
+      renderLinkPosts();
       return;
     }
     if (!res.ok) {
@@ -1631,12 +1821,20 @@ async function handleAuthSubmit(e) {
     } else {
       currentlyReadingCache = [];
     }
+    const linkPostsRes = await apiFetch("/api/link-posts");
+    if (linkPostsRes.ok) {
+      const lpData = await linkPostsRes.json();
+      linkPostsCache = lpData.items || [];
+    } else {
+      linkPostsCache = [];
+    }
     closeAuthModal();
     updateAuthUI();
     renderReadLog();
     renderUserLinks();
     renderPresets();
     renderCurrentlyReading();
+    renderLinkPosts();
   } catch (err) {
     errorEl.textContent = "Could not connect. Run `vercel dev` or deploy to Vercel.";
     errorEl.style.display = "block";
@@ -1657,11 +1855,13 @@ async function handleLogout() {
   linkListsCache = null;
   presetsCache = null;
   currentlyReadingCache = null;
+  linkPostsCache = null;
   updateAuthUI();
   renderReadLog();
   renderUserLinks();
   renderPresets();
   renderCurrentlyReading();
+  renderLinkPosts();
 }
 
 function getListNameForCategoryValue(val) {
