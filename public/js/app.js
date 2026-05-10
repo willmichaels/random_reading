@@ -399,16 +399,58 @@ function renderLinkPosts() {
 
 // --- User links ---
 
-function normalizeUrl(input) {
-  let s = (input || "").trim();
+/** Removes BOM / zero-width chars typical of rich-text or PDF paste. */
+function stripUrlPasteJunk(input) {
+  return String(input || "")
+    .replace(/^\uFEFF/, "")
+    .replace(/[\u200B-\u200D\uFEFF\u2060]/g, "")
+    .trim();
+}
+
+/** First http(s) URL in a string (e.g. pasted from HTML, email, or prose before the link). */
+function extractFirstHttpUrl(input) {
+  const s = stripUrlPasteJunk(input);
   if (!s) return null;
-  if (!/^https?:\/\//i.test(s)) s = "https://" + s;
+  const m = s.match(/https?:\/\/[^\s<>"'`>]+/i);
+  return m ? m[0] : null;
+}
+
+function parseHttpUrlCandidate(s) {
+  let t = stripUrlPasteJunk(s);
+  if (!t) return null;
+  if (!/^https?:\/\//i.test(t)) {
+    const inner = extractFirstHttpUrl(t);
+    if (inner) t = inner;
+    else t = "https://" + t;
+  }
   try {
-    new URL(s);
-    return s;
+    new URL(t);
+    return t;
   } catch {
     return null;
   }
+}
+
+function normalizeUrl(input) {
+  const raw = stripUrlPasteJunk(input);
+  if (!raw) return null;
+
+  const candidates = [];
+  let primary = raw;
+  if (primary.startsWith("<") && primary.endsWith(">")) {
+    primary = stripUrlPasteJunk(primary.slice(1, -1));
+  }
+  candidates.push(primary);
+  const extracted = extractFirstHttpUrl(raw);
+  if (extracted && extracted !== primary) {
+    candidates.push(extracted);
+  }
+
+  for (let i = 0; i < candidates.length; i++) {
+    const u = parseHttpUrlCandidate(candidates[i]);
+    if (u) return u;
+  }
+  return null;
 }
 
 function isWikipediaUrl(url) {
@@ -465,7 +507,7 @@ function saveUserLinks(links) {
 
 function addUserLinks(urlInput, listIds = []) {
   const urlStrings = (urlInput || "")
-    .split(",")
+    .split(/[,\n;\r\u2028\u2029]+/)
     .map((s) => s.trim())
     .filter(Boolean);
 
